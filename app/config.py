@@ -34,7 +34,13 @@ class Settings(BaseSettings):
     stt_model: str = Field(default="openai/whisper-large-v3:free")
     voice_max_duration_seconds: int = Field(default=300)
 
-    # Email (SMTP + IMAP). Пусто = функция выключена.
+    # Gmail API (OAuth2, HTTPS) — используется по умолчанию, если настроен.
+    gmail_client_id: str = Field(default="")
+    gmail_client_secret: str = Field(default="")
+    gmail_refresh_token: str = Field(default="")
+    gmail_address: str = Field(default="")
+
+    # Email через SMTP + IMAP — fallback, если Gmail API не настроен. Пусто = функция выключена.
     email_address: str = Field(default="")
     email_password: str = Field(default="")
     smtp_host: str = Field(default="")

@@ -31,7 +31,7 @@ class EmailSendTool(Tool):
 
     def permission_for(self, tool_input: dict) -> PermissionLevel:
         to = str(tool_input.get("to", "")).strip().lower()
-        own = settings.email_address.strip().lower()
+        own = (settings.gmail_address or settings.email_address).strip().lower()
         if own and to == own:
             return PermissionLevel.SAFE
         return PermissionLevel.CONFIRM
@@ -40,7 +40,7 @@ class EmailSendTool(Tool):
         args = EmailSendArgs.model_validate(kwargs)
         provider = build_email_provider(settings)
         if provider is None:
-            return "Email не настроен (EMAIL_ADDRESS/EMAIL_PASSWORD/SMTP_HOST/IMAP_HOST не заданы)."
+            return "Email не настроен (GMAIL_CLIENT_ID/GMAIL_REFRESH_TOKEN или EMAIL_ADDRESS/SMTP_HOST/IMAP_HOST не заданы)."
         try:
             await asyncio.to_thread(provider.send, args.to, args.subject, args.body)
         except Exception as exc:  # noqa: BLE001

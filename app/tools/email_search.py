@@ -28,7 +28,7 @@ class EmailSearchTool(Tool):
         args = EmailSearchArgs.model_validate(kwargs)
         provider = build_email_provider(settings)
         if provider is None:
-            return "Email не настроен (EMAIL_ADDRESS/EMAIL_PASSWORD/SMTP_HOST/IMAP_HOST не заданы)."
+            return "Email не настроен (GMAIL_CLIENT_ID/GMAIL_REFRESH_TOKEN или EMAIL_ADDRESS/SMTP_HOST/IMAP_HOST не заданы)."
         try:
             messages = await asyncio.to_thread(provider.search, args.query, args.limit)
         except Exception as exc:  # noqa: BLE001
