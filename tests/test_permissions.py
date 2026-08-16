@@ -43,4 +43,5 @@ def test_registry_contains_expected_tools():
         "email_send",
         "email_read_recent",
         "email_search",
+        "create_job",
     }

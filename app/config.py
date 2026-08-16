@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     # Reminder worker
     reminder_poll_interval_seconds: int = Field(default=30)
 
+    # Долгоживущие фоновые задания (Job)
+    job_poll_interval_seconds: int = Field(default=60)
+    job_max_runs: int = Field(default=100)
+
     # Logging
     log_level: str = Field(default="INFO")
 

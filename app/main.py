@@ -14,6 +14,7 @@ from app.config import settings
 from app.logging_setup import configure_logging, get_logger
 from app.stt.factory import build_stt_provider
 from app.tools.registry import default_registry
+from app.workers.job_worker import JobWorker
 from app.workers.reminder_worker import ReminderWorker
 
 logger = get_logger(__name__)
@@ -53,12 +54,19 @@ async def main() -> None:
     worker = ReminderWorker(bot, settings.telegram_owner_id, settings.reminder_poll_interval_seconds)
     worker_task = asyncio.create_task(worker.run())
 
+    job_worker = JobWorker(
+        bot, coordinator, settings.telegram_owner_id, settings.job_poll_interval_seconds, settings.job_max_runs
+    )
+    job_worker_task = asyncio.create_task(job_worker.run())
+
     logger.info("bot_starting")
     try:
         await dp.start_polling(bot)
     finally:
         worker.stop()
+        job_worker.stop()
         await worker_task
+        await job_worker_task
         await bot.session.close()
 
 

@@ -39,6 +39,7 @@ def _build_default_registry() -> ToolRegistry:
     from app.tools.browser_submit import BrowserSubmitTool
     from app.tools.browser_type import BrowserTypeTool
     from app.tools.complete_task import CompleteTaskTool
+    from app.tools.create_job import CreateJobTool
     from app.tools.create_reminder import CreateReminderTool
     from app.tools.create_task import CreateTaskTool
     from app.tools.email_read_recent import EmailReadRecentTool
@@ -69,6 +70,7 @@ def _build_default_registry() -> ToolRegistry:
         EmailSendTool,
         EmailReadRecentTool,
         EmailSearchTool,
+        CreateJobTool,
     ):
         registry.register(tool_cls())
     return registry

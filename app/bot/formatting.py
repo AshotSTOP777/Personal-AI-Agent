@@ -1,6 +1,21 @@
 from __future__ import annotations
 
+import re
+
 TELEGRAM_MESSAGE_LIMIT = 4096
+
+_HEADING_RE = re.compile(r"^#{1,6}\s*", re.MULTILINE)
+_CODE_RE = re.compile(r"`+")
+_BOLD_ITALIC_RE = re.compile(r"[*_]{1,3}")
+
+
+def strip_markdown(text: str) -> str:
+    """Убирает базовую markdown-разметку (**bold**, `code`, ## heading), чтобы ответы
+    в Telegram оставались обычным текстом без декоративных символов."""
+    text = _HEADING_RE.sub("", text)
+    text = _CODE_RE.sub("", text)
+    text = _BOLD_ITALIC_RE.sub("", text)
+    return text
 
 
 def split_message(text: str, limit: int = TELEGRAM_MESSAGE_LIMIT) -> list[str]:

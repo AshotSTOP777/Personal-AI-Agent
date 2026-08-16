@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.base import AIProvider, ToolCall
-from app.ai.system_prompt import SYSTEM_PROMPT
+from app.ai.system_prompt import build_system_prompt
 from app.logging_setup import get_logger
 from app.services import conversation_service, usage_service
 from app.tools.base import ToolContext
@@ -25,7 +25,7 @@ class CoordinatorResult:
 
 
 @dataclass
-class _PendingAction:
+class PendingAction:
     tool_call: ToolCall
     messages: list[dict[str, Any]]
     remaining_iterations: int
@@ -54,7 +54,7 @@ class Coordinator:
         self._tools = tool_registry
         self._history_window = history_window
         self._daily_token_limit = daily_token_limit
-        self._pending: dict[int, _PendingAction] = {}
+        self._pending: dict[int, PendingAction] = {}
 
     def has_pending(self, user_id: int) -> bool:
         return user_id in self._pending
@@ -110,6 +110,55 @@ class Coordinator:
         tool_defs = self._tools.anthropic_tool_definitions()
         return await self._run_loop(session, user_id, messages, tool_defs, ctx, pending.remaining_iterations)
 
+    async def run_job_iteration(
+        self,
+        session: AsyncSession,
+        user_id: int,
+        messages: list[dict[str, Any]],
+        max_iterations: int,
+        goal: str,
+    ) -> tuple[CoordinatorResult, PendingAction | None]:
+        """Один прогон agent loop для фонового job. В отличие от handle_message, не трогает
+        conversation_service (историю ведёт JobWorker через Job.context) и не использует
+        self._pending (там место только для интерактивного чата, у каждого job — своё
+        состояние в БД) — вместо этого возвращает PendingAction вызывающему."""
+        tool_defs = self._tools.anthropic_tool_definitions()
+        ctx = ToolContext(user_id=user_id, session=session)
+        store: dict[int, PendingAction] = {}
+        prompt = build_system_prompt(job_goal=goal)
+        result = await self._run_loop(
+            session, user_id, messages, tool_defs, ctx, max_iterations,
+            persist=False, pending_store=store, system_prompt=prompt,
+        )
+        return result, store.get(user_id)
+
+    async def confirm_job_pending(
+        self, session: AsyncSession, user_id: int, pending: PendingAction
+    ) -> tuple[CoordinatorResult, PendingAction | None]:
+        """Аналог confirm_pending для job: выполняет сохранённый tool call и продолжает
+        loop, не трогая conversation_service и self._pending."""
+        ctx = ToolContext(user_id=user_id, session=session)
+        result_text = await self._execute_tool(ctx, pending.tool_call.name, pending.tool_call.input)
+        messages = pending.messages + [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": pending.tool_call.id, "content": result_text}
+                ],
+            }
+        ]
+
+        if pending.remaining_iterations <= 0:
+            return CoordinatorResult(text=result_text), None
+
+        tool_defs = self._tools.anthropic_tool_definitions()
+        store: dict[int, PendingAction] = {}
+        result = await self._run_loop(
+            session, user_id, messages, tool_defs, ctx, pending.remaining_iterations,
+            persist=False, pending_store=store,
+        )
+        return result, store.get(user_id)
+
     async def _run_loop(
         self,
         session: AsyncSession,
@@ -118,11 +167,18 @@ class Coordinator:
         tool_defs: list[dict[str, Any]],
         ctx: ToolContext,
         max_iterations: int,
+        *,
+        persist: bool = True,
+        pending_store: dict[int, PendingAction] | None = None,
+        system_prompt: str | None = None,
     ) -> CoordinatorResult:
+        store = self._pending if pending_store is None else pending_store
+        prompt = system_prompt or build_system_prompt()
+
         final_text = ""
         last_tool_summary = ""
         for iteration in range(max_iterations):
-            response = await self._provider.generate(SYSTEM_PROMPT, messages, tool_defs)
+            response = await self._provider.generate(prompt, messages, tool_defs)
 
             await usage_service.log_usage(
                 session, user_id, model="claude", input_tokens=response.usage.input_tokens,
@@ -145,7 +201,7 @@ class Coordinator:
             )
             if blocked_tool is not None:
                 pending_messages = messages + [{"role": "assistant", "content": response.raw_content}]
-                self._pending[user_id] = _PendingAction(
+                store[user_id] = PendingAction(
                     tool_call=blocked_tool,
                     messages=pending_messages,
                     remaining_iterations=max_iterations - iteration - 1,
@@ -178,7 +234,8 @@ class Coordinator:
         if not final_text:
             final_text = "Не удалось получить ответ. Попробуй переформулировать запрос."
 
-        await conversation_service.add_message(session, user_id, "assistant", final_text)
+        if persist:
+            await conversation_service.add_message(session, user_id, "assistant", final_text)
         return CoordinatorResult(text=final_text)
 
     def _permission_of(self, tool_call: ToolCall) -> PermissionLevel:

@@ -5,16 +5,17 @@ import tempfile
 from pathlib import Path
 
 from aiogram import F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from app.ai.coordinator import Coordinator
-from app.bot.formatting import split_message
+from app.bot.formatting import split_message, strip_markdown
 from app.config import settings
 from app.db.session import session_scope
 from app.logging_setup import get_logger
-from app.services import memory_service, task_service
+from app.services import job_service, memory_service, task_service
 from app.stt.base import STTProvider
+from app.workers.job_worker import confirm_job
 
 logger = get_logger(__name__)
 
@@ -41,7 +42,29 @@ async def handle_confirmation(message: Message, coordinator: Coordinator) -> Non
         await message.answer("Что-то пошло не так при подтверждении действия. Попробуй ещё раз.")
         return
 
-    for chunk in split_message(result.text or "Не удалось получить ответ."):
+    for chunk in split_message(strip_markdown(result.text or "Не удалось получить ответ.")):
+        await message.answer(chunk)
+
+
+async def handle_job_confirmation(message: Message, coordinator: Coordinator, job_id: int) -> None:
+    """Подтверждает действие, на котором стоит долгоживущее задание (job), и продолжает
+    именно этот job — не отправляет слово подтверждения модели как новую задачу."""
+    user_id = message.from_user.id
+    await message.bot.send_chat_action(message.chat.id, "typing")
+
+    try:
+        async with session_scope() as session:
+            job = await job_service.get_job(session, job_id)
+            if job is None:
+                await message.answer("Задание не найдено.")
+                return
+            text = await confirm_job(session, coordinator, job)
+    except Exception:  # noqa: BLE001
+        logger.exception("confirm_job_failed", user_id=user_id, job_id=job_id)
+        await message.answer("Что-то пошло не так при подтверждении задания. Попробуй ещё раз.")
+        return
+
+    for chunk in split_message(strip_markdown(text)):
         await message.answer(chunk)
 
 
@@ -60,7 +83,7 @@ async def handle_text_message(message: Message, coordinator: Coordinator, user_t
         await message.answer("Что-то пошло не так при обработке запроса. Попробуй ещё раз.")
         return
 
-    for chunk in split_message(result.text or "Не удалось получить ответ."):
+    for chunk in split_message(strip_markdown(result.text or "Не удалось получить ответ.")):
         await message.answer(chunk)
 
 
@@ -134,7 +157,8 @@ def build_router(coordinator: Coordinator, stt_provider: STTProvider | None = No
             "• Найди лучшие ноутбуки до 100000 рублей\n\n"
             "Можно писать текстом или голосовым сообщением (до "
             f"{settings.voice_max_duration_seconds // 60} минут).\n\n"
-            "Команды: /tasks — активные задачи, /memory — последние факты в памяти, /cancel — отменить текущий запрос."
+            "Команды: /tasks — активные задачи, /memory — последние факты в памяти, "
+            "/jobs — фоновые задания, /cancel_job <id> — остановить задание, /cancel — отменить текущий запрос."
         )
 
     @router.message(Command("tasks"))
@@ -156,6 +180,29 @@ def build_router(coordinator: Coordinator, stt_provider: STTProvider | None = No
             return
         lines = [f"[{m.category}] {m.content}" for m in memories]
         await message.answer("\n".join(lines))
+
+    @router.message(Command("jobs"))
+    async def cmd_jobs(message: Message) -> None:
+        async with session_scope() as session:
+            jobs = await job_service.list_active_jobs(session, message.from_user.id)
+        if not jobs:
+            await message.answer("Активных заданий нет.")
+            return
+        lines = [f"#{j.id} [{j.status.value}] {j.goal}" for j in jobs]
+        await message.answer("\n".join(lines))
+
+    @router.message(Command("cancel_job"))
+    async def cmd_cancel_job(message: Message, command: CommandObject) -> None:
+        arg = (command.args or "").strip()
+        if not arg.isdigit():
+            await message.answer("Использование: /cancel_job <id>")
+            return
+        async with session_scope() as session:
+            job = await job_service.cancel_job(session, message.from_user.id, int(arg))
+        if job is None:
+            await message.answer("Задание не найдено или уже завершено.")
+            return
+        await message.answer(f"Задание #{job.id} остановлено.")
 
     @router.message(Command("cancel"))
     async def cmd_cancel(message: Message) -> None:
@@ -182,6 +229,12 @@ def build_router(coordinator: Coordinator, stt_provider: STTProvider | None = No
                 await handle_confirmation(message, coordinator)
                 return
             coordinator.clear_pending(user_id)
+        elif _is_confirmation(message.text):
+            async with session_scope() as session:
+                paused_job = await job_service.get_oldest_paused_job(session, user_id)
+            if paused_job is not None:
+                await handle_job_confirmation(message, coordinator, paused_job.id)
+                return
 
         await handle_text_message(message, coordinator, message.text)
 

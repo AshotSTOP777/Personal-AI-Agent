@@ -164,9 +164,9 @@ async def test_repeated_confirm_does_not_resend(db_session, monkeypatch):
 
 def test_clear_pending_removes_state(db_session):
     coordinator = _make_coordinator(ScriptedProvider([]))
-    from app.ai.coordinator import _PendingAction
+    from app.ai.coordinator import PendingAction
 
-    coordinator._pending[1] = _PendingAction(
+    coordinator._pending[1] = PendingAction(
         tool_call=ToolCall(id="x", name="email_send", input={}), messages=[], remaining_iterations=1
     )
     assert coordinator.has_pending(1) is True
