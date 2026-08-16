@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     telegram_owner_id: int = Field(default=0)
 
     # AI provider selection
-    ai_provider: str = Field(default="anthropic")  # "anthropic" | "gemini"
+    ai_provider: str = Field(default="anthropic")  # "anthropic" | "gemini" | "openrouter"
 
     # Anthropic
     anthropic_api_key: str = Field(default="")
@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     # Gemini
     gemini_api_key: str = Field(default="")
     gemini_model: str = Field(default="gemini-2.5-flash")
+
+    # OpenRouter (OpenAI-compatible API)
+    openrouter_api_key: str = Field(default="")
+    openrouter_model: str = Field(default="openrouter/free")
 
     # Database
     database_url: str = Field(default="postgresql+asyncpg://user:password@localhost:5432/personal_ai_agent")

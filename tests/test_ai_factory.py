@@ -5,6 +5,7 @@ import pytest
 from app.ai.anthropic_provider import AnthropicProvider
 from app.ai.factory import build_provider
 from app.ai.gemini_provider import GeminiProvider
+from app.ai.openrouter_provider import OpenRouterProvider
 from app.config import Settings
 
 
@@ -29,6 +30,18 @@ def test_build_provider_gemini_without_key_raises():
 def test_build_provider_anthropic_without_key_raises():
     settings = Settings(ai_provider="anthropic", anthropic_api_key="")
     with pytest.raises(RuntimeError, match="ANTHROPIC_API_KEY"):
+        build_provider(settings)
+
+
+def test_build_provider_openrouter_does_not_require_anthropic_key():
+    settings = Settings(ai_provider="openrouter", openrouter_api_key="fake-openrouter-key", anthropic_api_key="")
+    provider = build_provider(settings)
+    assert isinstance(provider, OpenRouterProvider)
+
+
+def test_build_provider_openrouter_without_key_raises():
+    settings = Settings(ai_provider="openrouter", openrouter_api_key="")
+    with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
         build_provider(settings)
 
 

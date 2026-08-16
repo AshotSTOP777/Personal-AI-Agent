@@ -20,4 +20,11 @@ def build_provider(settings: Settings) -> AIProvider:
 
         return AnthropicProvider(api_key=settings.anthropic_api_key, model=settings.anthropic_model)
 
+    if settings.ai_provider == "openrouter":
+        if not settings.openrouter_api_key:
+            raise RuntimeError("OPENROUTER_API_KEY не задан")
+        from app.ai.openrouter_provider import OpenRouterProvider
+
+        return OpenRouterProvider(api_key=settings.openrouter_api_key, model=settings.openrouter_model)
+
     raise RuntimeError(f"Неизвестный AI_PROVIDER: {settings.ai_provider!r}")
