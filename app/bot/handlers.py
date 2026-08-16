@@ -20,6 +20,30 @@ logger = get_logger(__name__)
 
 router = Router(name="main")
 
+_CONFIRMATION_WORDS = {"да", "подтверждаю", "confirm", "yes", "ок", "окей", "выполняй", "го", "y"}
+
+
+def _is_confirmation(text: str) -> bool:
+    return text.strip().strip(".!,").lower() in _CONFIRMATION_WORDS
+
+
+async def handle_confirmation(message: Message, coordinator: Coordinator) -> None:
+    """Выполняет ранее заблокированное на подтверждение действие напрямую — не отправляет
+    слово подтверждения модели как новую задачу."""
+    user_id = message.from_user.id
+    await message.bot.send_chat_action(message.chat.id, "typing")
+
+    try:
+        async with session_scope() as session:
+            result = await coordinator.confirm_pending(session, user_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("confirm_pending_failed", user_id=user_id)
+        await message.answer("Что-то пошло не так при подтверждении действия. Попробуй ещё раз.")
+        return
+
+    for chunk in split_message(result.text or "Не удалось получить ответ."):
+        await message.answer(chunk)
+
 
 async def handle_text_message(message: Message, coordinator: Coordinator, user_text: str) -> None:
     """Отправляет текст в Coordinator и возвращает ответ. Используется как для обычных
@@ -135,7 +159,12 @@ def build_router(coordinator: Coordinator, stt_provider: STTProvider | None = No
 
     @router.message(Command("cancel"))
     async def cmd_cancel(message: Message) -> None:
-        await message.answer("Запросы обрабатываются по одному, отменять сейчас нечего.")
+        had_pending = coordinator.has_pending(message.from_user.id)
+        coordinator.clear_pending(message.from_user.id)
+        if had_pending:
+            await message.answer("Ожидающее подтверждения действие отменено.")
+        else:
+            await message.answer("Запросы обрабатываются по одному, отменять сейчас нечего.")
 
     @router.message(F.voice | F.audio)
     async def voice_handler(message: Message) -> None:
@@ -146,6 +175,14 @@ def build_router(coordinator: Coordinator, stt_provider: STTProvider | None = No
         if not message.text:
             await message.answer("Я понимаю текстовые и голосовые сообщения.")
             return
+
+        user_id = message.from_user.id
+        if coordinator.has_pending(user_id):
+            if _is_confirmation(message.text):
+                await handle_confirmation(message, coordinator)
+                return
+            coordinator.clear_pending(user_id)
+
         await handle_text_message(message, coordinator, message.text)
 
     return router

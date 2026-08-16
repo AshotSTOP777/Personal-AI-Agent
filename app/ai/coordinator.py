@@ -5,13 +5,13 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.base import AIProvider
+from app.ai.base import AIProvider, ToolCall
 from app.ai.system_prompt import SYSTEM_PROMPT
 from app.logging_setup import get_logger
 from app.services import conversation_service, usage_service
 from app.tools.base import ToolContext
-from app.tools.registry import ToolRegistry
 from app.tools.permissions import PermissionLevel
+from app.tools.registry import ToolRegistry
 
 logger = get_logger(__name__)
 
@@ -22,6 +22,13 @@ MAX_TOOL_ITERATIONS = 10
 class CoordinatorResult:
     text: str
     pending_confirmation: dict[str, Any] | None = field(default=None)
+
+
+@dataclass
+class _PendingAction:
+    tool_call: ToolCall
+    messages: list[dict[str, Any]]
+    remaining_iterations: int
 
 
 class DailyLimitExceeded(Exception):
@@ -47,6 +54,13 @@ class Coordinator:
         self._tools = tool_registry
         self._history_window = history_window
         self._daily_token_limit = daily_token_limit
+        self._pending: dict[int, _PendingAction] = {}
+
+    def has_pending(self, user_id: int) -> bool:
+        return user_id in self._pending
+
+    def clear_pending(self, user_id: int) -> None:
+        self._pending.pop(user_id, None)
 
     async def handle_message(self, session: AsyncSession, user_id: int, user_text: str) -> CoordinatorResult:
         tokens_used = await usage_service.get_tokens_used_today(session, user_id)
@@ -54,6 +68,9 @@ class Coordinator:
             return CoordinatorResult(
                 text="Достигнут дневной лимит токенов. Попробуй завтра или попроси владельца увеличить лимит."
             )
+
+        # Новая задача отменяет любое незавершённое подтверждение от предыдущей.
+        self._pending.pop(user_id, None)
 
         await conversation_service.add_message(session, user_id, "user", user_text)
         history = await conversation_service.get_recent_history(session, user_id, self._history_window)
@@ -65,9 +82,46 @@ class Coordinator:
         tool_defs = self._tools.anthropic_tool_definitions()
         ctx = ToolContext(user_id=user_id, session=session)
 
+        return await self._run_loop(session, user_id, messages, tool_defs, ctx, MAX_TOOL_ITERATIONS)
+
+    async def confirm_pending(self, session: AsyncSession, user_id: int) -> CoordinatorResult:
+        """Выполняет ровно тот tool call, что был заблокирован на подтверждение, и
+        продолжает agent loop с его результатом — без повторного планирования задачи моделью."""
+        pending = self._pending.pop(user_id, None)
+        if pending is None:
+            return CoordinatorResult(text="Нет действия, ожидающего подтверждения.")
+
+        ctx = ToolContext(user_id=user_id, session=session)
+        result_text = await self._execute_tool(ctx, pending.tool_call.name, pending.tool_call.input)
+
+        messages = pending.messages + [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": pending.tool_call.id, "content": result_text}
+                ],
+            }
+        ]
+
+        if pending.remaining_iterations <= 0:
+            await conversation_service.add_message(session, user_id, "assistant", result_text)
+            return CoordinatorResult(text=result_text)
+
+        tool_defs = self._tools.anthropic_tool_definitions()
+        return await self._run_loop(session, user_id, messages, tool_defs, ctx, pending.remaining_iterations)
+
+    async def _run_loop(
+        self,
+        session: AsyncSession,
+        user_id: int,
+        messages: list[dict[str, Any]],
+        tool_defs: list[dict[str, Any]],
+        ctx: ToolContext,
+        max_iterations: int,
+    ) -> CoordinatorResult:
         final_text = ""
         last_tool_summary = ""
-        for _ in range(MAX_TOOL_ITERATIONS):
+        for iteration in range(max_iterations):
             response = await self._provider.generate(SYSTEM_PROMPT, messages, tool_defs)
 
             await usage_service.log_usage(
@@ -86,14 +140,20 @@ class Coordinator:
                 break
 
             blocked_tool = next(
-                (tc for tc in response.tool_calls if self._permission_of(tc.name).requires_confirmation),
+                (tc for tc in response.tool_calls if self._permission_of(tc).requires_confirmation),
                 None,
             )
             if blocked_tool is not None:
+                pending_messages = messages + [{"role": "assistant", "content": response.raw_content}]
+                self._pending[user_id] = _PendingAction(
+                    tool_call=blocked_tool,
+                    messages=pending_messages,
+                    remaining_iterations=max_iterations - iteration - 1,
+                )
                 return CoordinatorResult(
                     text=(
                         f"Требуется подтверждение для выполнения действия «{blocked_tool.name}» "
-                        f"с параметрами {blocked_tool.input}. Подтверди выполнение."
+                        f"с параметрами {blocked_tool.input}. Напиши «да», чтобы подтвердить."
                     ),
                     pending_confirmation={"tool_name": blocked_tool.name, "input": blocked_tool.input},
                 )
@@ -118,14 +178,12 @@ class Coordinator:
         if not final_text:
             final_text = "Не удалось получить ответ. Попробуй переформулировать запрос."
 
-        if final_text:
-            await conversation_service.add_message(session, user_id, "assistant", final_text)
-
+        await conversation_service.add_message(session, user_id, "assistant", final_text)
         return CoordinatorResult(text=final_text)
 
-    def _permission_of(self, tool_name: str) -> PermissionLevel:
-        tool = self._tools.get(tool_name)
-        return tool.permission if tool else PermissionLevel.CRITICAL
+    def _permission_of(self, tool_call: ToolCall) -> PermissionLevel:
+        tool = self._tools.get(tool_call.name)
+        return tool.permission_for(tool_call.input) if tool else PermissionLevel.CRITICAL
 
     async def _execute_tool(self, ctx: ToolContext, name: str, args: dict[str, Any]) -> str:
         tool = self._tools.get(name)

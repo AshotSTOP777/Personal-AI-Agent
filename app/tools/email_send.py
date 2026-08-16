@@ -22,11 +22,19 @@ class EmailSendArgs(BaseModel):
 class EmailSendTool(Tool):
     name = "email_send"
     description = (
-        "Отправляет email одному получателю через SMTP. Необратимое действие вовне — "
-        "требует подтверждения владельца. Не используй для массовой рассылки."
+        "Отправляет email одному получателю через SMTP. Письмо на собственный адрес "
+        "владельца (EMAIL_ADDRESS) отправляется сразу; на любой другой адрес — только "
+        "после подтверждения владельца. Не используй для массовой рассылки."
     )
     args_schema = EmailSendArgs
     permission = PermissionLevel.CONFIRM
+
+    def permission_for(self, tool_input: dict) -> PermissionLevel:
+        to = str(tool_input.get("to", "")).strip().lower()
+        own = settings.email_address.strip().lower()
+        if own and to == own:
+            return PermissionLevel.SAFE
+        return PermissionLevel.CONFIRM
 
     async def run(self, ctx: ToolContext, **kwargs) -> str:
         args = EmailSendArgs.model_validate(kwargs)
