@@ -19,6 +19,14 @@ def build_stt_provider(settings: Settings) -> STTProvider | None:
 
         return GroqWhisperProvider(api_key=settings.groq_api_key, model=settings.stt_model)
 
+    if settings.stt_provider == "openrouter":
+        if not settings.openrouter_api_key:
+            logger.warning("stt_not_configured", provider="openrouter", reason="missing OPENROUTER_API_KEY")
+            return None
+        from app.stt.openrouter_provider import OpenRouterSTTProvider
+
+        return OpenRouterSTTProvider(api_key=settings.openrouter_api_key, model=settings.stt_model)
+
     if settings.stt_provider:
         logger.warning("stt_unknown_provider", provider=settings.stt_provider)
     return None

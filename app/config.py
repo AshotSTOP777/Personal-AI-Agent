@@ -29,9 +29,9 @@ class Settings(BaseSettings):
     openrouter_model: str = Field(default="openrouter/free")
 
     # Speech-to-text (голосовые сообщения). Пусто/неизвестное значение = функция выключена.
-    stt_provider: str = Field(default="groq")  # "" | "groq"
+    stt_provider: str = Field(default="openrouter")  # "" | "groq" | "openrouter"
     groq_api_key: str = Field(default="")
-    stt_model: str = Field(default="whisper-large-v3-turbo")
+    stt_model: str = Field(default="openai/whisper-large-v3:free")
     voice_max_duration_seconds: int = Field(default=300)
 
     # Database
