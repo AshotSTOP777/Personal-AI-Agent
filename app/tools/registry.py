@@ -32,9 +32,18 @@ class ToolRegistry:
 
 
 def _build_default_registry() -> ToolRegistry:
+    from app.tools.browser_click import BrowserClickTool
+    from app.tools.browser_current_url import BrowserCurrentUrlTool
+    from app.tools.browser_open import BrowserOpenTool
+    from app.tools.browser_read import BrowserReadTool
+    from app.tools.browser_submit import BrowserSubmitTool
+    from app.tools.browser_type import BrowserTypeTool
     from app.tools.complete_task import CompleteTaskTool
     from app.tools.create_reminder import CreateReminderTool
     from app.tools.create_task import CreateTaskTool
+    from app.tools.email_read_recent import EmailReadRecentTool
+    from app.tools.email_search import EmailSearchTool
+    from app.tools.email_send import EmailSendTool
     from app.tools.fetch_page import FetchPageTool
     from app.tools.list_tasks import ListTasksTool
     from app.tools.recall_memory import RecallMemoryTool
@@ -51,6 +60,15 @@ def _build_default_registry() -> ToolRegistry:
         CreateReminderTool,
         WebSearchTool,
         FetchPageTool,
+        BrowserOpenTool,
+        BrowserReadTool,
+        BrowserClickTool,
+        BrowserTypeTool,
+        BrowserSubmitTool,
+        BrowserCurrentUrlTool,
+        EmailSendTool,
+        EmailReadRecentTool,
+        EmailSearchTool,
     ):
         registry.register(tool_cls())
     return registry

@@ -34,6 +34,17 @@ class Settings(BaseSettings):
     stt_model: str = Field(default="openai/whisper-large-v3:free")
     voice_max_duration_seconds: int = Field(default=300)
 
+    # Email (SMTP + IMAP). Пусто = функция выключена.
+    email_address: str = Field(default="")
+    email_password: str = Field(default="")
+    smtp_host: str = Field(default="")
+    smtp_port: int = Field(default=465)
+    imap_host: str = Field(default="")
+    imap_port: int = Field(default=993)
+
+    # Browser automation (Playwright)
+    browser_timeout_ms: int = Field(default=15000)
+
     # Database
     database_url: str = Field(default="postgresql+asyncpg://user:password@localhost:5432/personal_ai_agent")
 

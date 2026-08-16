@@ -13,10 +13,14 @@ def test_confirm_and_critical_require_confirmation():
     assert PermissionLevel.CRITICAL.requires_confirmation is True
 
 
-def test_default_registry_tools_are_safe():
-    """Все текущие инструменты первой версии не должны требовать подтверждения."""
+_CONFIRM_TOOLS = {"email_send", "browser_submit"}
+
+
+def test_default_registry_tools_are_safe_unless_explicitly_risky():
+    """Только явно рискованные действия (отправка email, submit формы) требуют подтверждения."""
     for tool in default_registry.all():
-        assert tool.permission == PermissionLevel.SAFE
+        expected = PermissionLevel.CONFIRM if tool.name in _CONFIRM_TOOLS else PermissionLevel.SAFE
+        assert tool.permission == expected, tool.name
 
 
 def test_registry_contains_expected_tools():
@@ -30,4 +34,13 @@ def test_registry_contains_expected_tools():
         "create_reminder",
         "web_search",
         "fetch_page",
+        "browser_open",
+        "browser_read",
+        "browser_click",
+        "browser_type",
+        "browser_submit",
+        "browser_current_url",
+        "email_send",
+        "email_read_recent",
+        "email_search",
     }

@@ -15,7 +15,7 @@ from app.tools.permissions import PermissionLevel
 
 logger = get_logger(__name__)
 
-MAX_TOOL_ITERATIONS = 5
+MAX_TOOL_ITERATIONS = 10
 
 
 @dataclass
