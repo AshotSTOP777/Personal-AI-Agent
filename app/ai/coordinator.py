@@ -66,6 +66,7 @@ class Coordinator:
         ctx = ToolContext(user_id=user_id, session=session)
 
         final_text = ""
+        last_tool_summary = ""
         for _ in range(MAX_TOOL_ITERATIONS):
             response = await self._provider.generate(SYSTEM_PROMPT, messages, tool_defs)
 
@@ -105,9 +106,17 @@ class Coordinator:
                 tool_result_blocks.append(
                     {"type": "tool_result", "tool_use_id": tool_call.id, "content": result_text}
                 )
+            last_tool_summary = "\n".join(block["content"] for block in tool_result_blocks)
             messages.append({"role": "user", "content": tool_result_blocks})
         else:
             final_text = "Не удалось завершить задачу за отведённое число шагов. Попробуй сформулировать проще."
+
+        # Модель иногда вызывает инструмент и не даёт текстового резюме — вместо
+        # молчаливого "Готово" показываем реальный результат последнего инструмента.
+        if not final_text and last_tool_summary:
+            final_text = last_tool_summary
+        if not final_text:
+            final_text = "Не удалось получить ответ. Попробуй переформулировать запрос."
 
         if final_text:
             await conversation_service.add_message(session, user_id, "assistant", final_text)

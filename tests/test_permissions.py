@@ -29,4 +29,5 @@ def test_registry_contains_expected_tools():
         "complete_task",
         "create_reminder",
         "web_search",
+        "fetch_page",
     }

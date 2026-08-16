@@ -35,6 +35,7 @@ def _build_default_registry() -> ToolRegistry:
     from app.tools.complete_task import CompleteTaskTool
     from app.tools.create_reminder import CreateReminderTool
     from app.tools.create_task import CreateTaskTool
+    from app.tools.fetch_page import FetchPageTool
     from app.tools.list_tasks import ListTasksTool
     from app.tools.recall_memory import RecallMemoryTool
     from app.tools.remember import RememberTool
@@ -49,6 +50,7 @@ def _build_default_registry() -> ToolRegistry:
         CompleteTaskTool,
         CreateReminderTool,
         WebSearchTool,
+        FetchPageTool,
     ):
         registry.register(tool_cls())
     return registry

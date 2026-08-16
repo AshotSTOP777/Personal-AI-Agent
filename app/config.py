@@ -28,6 +28,12 @@ class Settings(BaseSettings):
     openrouter_api_key: str = Field(default="")
     openrouter_model: str = Field(default="openrouter/free")
 
+    # Speech-to-text (голосовые сообщения). Пусто/неизвестное значение = функция выключена.
+    stt_provider: str = Field(default="groq")  # "" | "groq"
+    groq_api_key: str = Field(default="")
+    stt_model: str = Field(default="whisper-large-v3-turbo")
+    voice_max_duration_seconds: int = Field(default=300)
+
     # Database
     database_url: str = Field(default="postgresql+asyncpg://user:password@localhost:5432/personal_ai_agent")
 
