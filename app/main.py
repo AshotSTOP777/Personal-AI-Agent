@@ -6,8 +6,8 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from app.ai.anthropic_provider import AnthropicProvider
 from app.ai.coordinator import Coordinator
+from app.ai.factory import build_provider
 from app.bot.handlers import build_router
 from app.bot.middlewares import OwnerOnlyMiddleware
 from app.config import settings
@@ -25,8 +25,7 @@ async def main() -> None:
         raise RuntimeError("TELEGRAM_BOT_TOKEN не задан")
     if not settings.telegram_owner_id:
         raise RuntimeError("TELEGRAM_OWNER_ID не задан")
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY не задан")
+    provider = build_provider(settings)
 
     bot = Bot(
         token=settings.telegram_bot_token,
@@ -34,7 +33,6 @@ async def main() -> None:
     )
     dp = Dispatcher()
 
-    provider = AnthropicProvider(api_key=settings.anthropic_api_key, model=settings.anthropic_model)
     coordinator = Coordinator(
         provider=provider,
         tool_registry=default_registry,

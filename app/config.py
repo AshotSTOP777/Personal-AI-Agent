@@ -13,9 +13,16 @@ class Settings(BaseSettings):
     telegram_bot_token: str = Field(default="")
     telegram_owner_id: int = Field(default=0)
 
+    # AI provider selection
+    ai_provider: str = Field(default="anthropic")  # "anthropic" | "gemini"
+
     # Anthropic
     anthropic_api_key: str = Field(default="")
     anthropic_model: str = Field(default="claude-sonnet-5")
+
+    # Gemini
+    gemini_api_key: str = Field(default="")
+    gemini_model: str = Field(default="gemini-2.5-flash")
 
     # Database
     database_url: str = Field(default="postgresql+asyncpg://user:password@localhost:5432/personal_ai_agent")
