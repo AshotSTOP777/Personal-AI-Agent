@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 
 from app.config import settings
 from app.logging_setup import configure_logging, get_logger
@@ -42,53 +43,53 @@ async def check_llm() -> str:
 
 
 async def check_database() -> str:
-    try:
-        from sqlalchemy import text
+    from app.db.bootstrap import ensure_postgres_ready
 
-        from app.db.session import get_engine
-
-        engine = get_engine()
-        async with engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        return "OK"
-    except Exception as exc:  # noqa: BLE001
-        return f"FAIL ({exc})"
+    return await ensure_postgres_ready(settings.database_url)
 
 
-def check_migrations() -> str:
+async def check_migrations(db_status: str) -> str:
+    if db_status != "OK":
+        return "SKIP (база недоступна)"
     try:
         from alembic import command
         from alembic.config import Config
 
-        config = Config("alembic.ini")
-        command.upgrade(config, "head")
+        await asyncio.to_thread(command.upgrade, Config("alembic.ini"), "head")
         return "OK"
     except Exception as exc:  # noqa: BLE001
-        return f"FAIL ({exc})"
+        return f"FAIL ({type(exc).__name__})"
 
 
-def check_playwright_chromium() -> str:
+async def check_playwright_chromium() -> str:
+    """Асинхронный Playwright API — используется тем же event loop, что и остальное
+    приложение, без sync API в отдельном потоке (это и вызывало 'Event loop is closed'
+    при выходе на Windows)."""
     try:
-        from playwright.sync_api import sync_playwright
+        from playwright.async_api import async_playwright
     except ImportError:
         return "FAIL (pip install playwright)"
+
+    async def _launch_and_close() -> None:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            await browser.close()
+
     try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            browser.close()
+        await _launch_and_close()
         return "OK"
     except Exception:  # noqa: BLE001
         try:
-            import subprocess
-            import sys
-
-            subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True, timeout=300)
-            with sync_playwright() as p:
-                browser = p.chromium.launch(headless=True)
-                browser.close()
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "-m", "playwright", "install", "chromium"
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=300)
+            if proc.returncode != 0:
+                return "FAIL (playwright install chromium завершился с ошибкой)"
+            await _launch_and_close()
             return "OK (Chromium установлен автоматически)"
         except Exception as exc:  # noqa: BLE001
-            return f"FAIL ({exc})"
+            return f"FAIL ({type(exc).__name__})"
 
 
 async def check_avito() -> str:
@@ -131,14 +132,19 @@ async def run() -> None:
     configure_logging(settings.log_level)
     print(f"Telegram: {await check_telegram()}")
     print(f"LLM ({settings.ai_provider}): {await check_llm()}")
-    print(f"Database: {await check_database()}")
-    print(f"Migrations: {await asyncio.to_thread(check_migrations)}")
-    print(f"Playwright/Chromium: {await asyncio.to_thread(check_playwright_chromium)}")
+    db_status = await check_database()
+    print(f"Database: {db_status}")
+    print(f"Migrations: {await check_migrations(db_status)}")
+    print(f"Playwright/Chromium: {await check_playwright_chromium()}")
     print(f"Avito session: {await check_avito()}")
     print(f"Email: {check_email()}")
     print(f"Tools: {check_tools()}")
     print(f"Workers: {check_workers()}")
 
 
-if __name__ == "__main__":
+def main() -> None:
     asyncio.run(run())
+
+
+if __name__ == "__main__":
+    main()

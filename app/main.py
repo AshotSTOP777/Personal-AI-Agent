@@ -13,6 +13,7 @@ from app.browser.session import browser_session
 from app.bot.handlers import build_router
 from app.bot.middlewares import OwnerOnlyMiddleware
 from app.config import settings
+from app.db.bootstrap import ensure_postgres_ready
 from app.logging_setup import configure_logging, get_logger
 from app.stt.factory import build_stt_provider
 from app.tools.registry import default_registry
@@ -24,16 +25,33 @@ logger = get_logger(__name__)
 POLLING_RETRY_DELAY_SECONDS = 5
 
 
-def _ensure_database_ready() -> None:
-    """Применяет alembic-миграции до head перед стартом — без ручного alembic upgrade head."""
+async def _ensure_database_ready() -> None:
+    """Готовит PostgreSQL (запуск службы/создание БД при необходимости) и применяет
+    alembic-миграции до head перед стартом — без ручных действий."""
+    status = await ensure_postgres_ready(settings.database_url)
+    if status != "OK":
+        raise RuntimeError(status)
+
     from alembic import command
     from alembic.config import Config
 
     try:
-        config = Config("alembic.ini")
-        command.upgrade(config, "head")
+        await asyncio.to_thread(command.upgrade, Config("alembic.ini"), "head")
     except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"База данных недоступна или миграции не применились: {exc}") from exc
+        raise RuntimeError(f"Миграции не применились: {type(exc).__name__}") from exc
+
+
+async def _wait_for_telegram_ready(bot: Bot):
+    """Таймаут/ошибка сети до api.telegram.org — сетевой blocker, а не баг: не падаем,
+    а ждём и пробуем снова, пока сеть/VPN не восстановятся."""
+    while True:
+        try:
+            me = await bot.get_me()
+            await bot.delete_webhook(drop_pending_updates=False)
+            return me
+        except TelegramNetworkError:
+            logger.warning("telegram_unreachable_network_blocker_retrying")
+            await asyncio.sleep(POLLING_RETRY_DELAY_SECONDS)
 
 
 async def _run_polling(bot: Bot, dp: Dispatcher) -> None:
@@ -66,7 +84,7 @@ async def main() -> None:
     if not settings.telegram_owner_id:
         raise RuntimeError("TELEGRAM_OWNER_ID не задан")
 
-    await asyncio.to_thread(_ensure_database_ready)
+    await _ensure_database_ready()
     logger.info("database_ready")
 
     provider = build_provider(settings)
@@ -101,10 +119,8 @@ async def main() -> None:
     )
     job_worker_task = asyncio.create_task(job_worker.run())
 
-    me = await bot.get_me()
+    me = await _wait_for_telegram_ready(bot)
     logger.info("bot_identity", username=me.username, bot_id=me.id)
-
-    await bot.delete_webhook(drop_pending_updates=False)
     logger.info("webhook_deleted")
 
     logger.info("bot_starting")
