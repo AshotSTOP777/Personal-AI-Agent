@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from app.config import settings
 
@@ -21,7 +22,7 @@ _PROTECTION_KEYWORDS = (
 )
 
 
-def _detect_protection(text: str) -> str | None:
+def detect_protection(text: str) -> str | None:
     lowered = text.lower()
     if any(keyword in lowered for keyword in _PROTECTION_KEYWORDS):
         return (
@@ -32,30 +33,54 @@ def _detect_protection(text: str) -> str | None:
 
 
 class BrowserSession:
-    """Один headless-браузер (Playwright) на процесс — бот приватный, одновременных
-    пользователей нет, поэтому отдельная сессия на пользователя не нужна.
+    """Один persistent Chromium context (Playwright) на процесс.
 
-    Страница переиспользуется между вызовами инструментов в рамках одного и последующих
-    диалогов (открыл -> прочитал -> кликнул -> ...), таймауты на все операции защищают
-    от зависаний / бесконечных ожиданий."""
+    Cookies, local storage и авторизация сохраняются в profile_dir и переживают
+    перезапуск процесса. Это позволяет один раз вручную войти, например, в Avito,
+    после чего работать в headless-режиме с той же сессией.
 
-    def __init__(self, timeout_ms: int = 15000) -> None:
+    profile_dir содержит чувствительные данные авторизации и не должен попадать в git.
+    """
+
+    def __init__(
+        self,
+        timeout_ms: int = 15000,
+        profile_dir: str = ".browser-profile",
+        headless: bool = True,
+    ) -> None:
         self._timeout_ms = timeout_ms
+        self._profile_dir = Path(profile_dir).expanduser()
+        self._headless = headless
         self._playwright = None
-        self._browser = None
+        self._context = None
         self._page = None
 
     async def _ensure_page(self):
-        if self._page is not None:
+        if self._page is not None and not self._page.is_closed():
             return self._page
         from playwright.async_api import async_playwright
 
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=True)
-        page = await self._browser.new_page()
+        if self._playwright is None:
+            self._playwright = await async_playwright().start()
+
+        self._profile_dir.mkdir(parents=True, exist_ok=True)
+        self._context = await self._playwright.chromium.launch_persistent_context(
+            user_data_dir=str(self._profile_dir),
+            headless=self._headless,
+        )
+        page = self._context.pages[0] if self._context.pages else await self._context.new_page()
         page.set_default_timeout(self._timeout_ms)
         self._page = page
         return self._page
+
+    @property
+    def timeout_ms(self) -> int:
+        return self._timeout_ms
+
+    async def get_page(self):
+        """Даёт прямой доступ к Playwright Page для специализированных инструментов
+        (например, скрапинг Avito), которым нужно больше, чем базовые open/read/click."""
+        return await self._ensure_page()
 
     async def open(self, url: str) -> str:
         page = await self._ensure_page()
@@ -69,7 +94,7 @@ class BrowserSession:
         text = re.sub(r"\s+", " ", raw_text).strip()
         if len(text) > max_chars:
             text = text[:max_chars].rstrip() + "…"
-        warning = _detect_protection(text)
+        warning = detect_protection(text)
         return f"{warning}\n\n{text}" if warning else text
 
     async def click(self, selector: str) -> str:
@@ -95,13 +120,17 @@ class BrowserSession:
         return page.url
 
     async def close(self) -> None:
-        if self._browser is not None:
-            await self._browser.close()
+        if self._context is not None:
+            await self._context.close()
         if self._playwright is not None:
             await self._playwright.stop()
         self._page = None
-        self._browser = None
+        self._context = None
         self._playwright = None
 
 
-browser_session = BrowserSession(timeout_ms=settings.browser_timeout_ms)
+browser_session = BrowserSession(
+    timeout_ms=settings.browser_timeout_ms,
+    profile_dir=settings.browser_profile_dir,
+    headless=settings.browser_headless,
+)

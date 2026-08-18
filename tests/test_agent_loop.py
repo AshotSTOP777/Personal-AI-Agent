@@ -63,6 +63,9 @@ async def test_registration_flow_stops_before_submit(db_session, monkeypatch):
             self.filled = False
             self.submitted = False
 
+        def is_closed(self) -> bool:
+            return False
+
         async def goto(self, url, timeout=None):
             self.url = url
 

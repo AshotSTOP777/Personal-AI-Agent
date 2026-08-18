@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -8,6 +9,15 @@ from openai import AsyncOpenAI
 from app.ai.base import AIProvider, AIResponse, TokenUsage, ToolCall
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def _strip_reasoning(text: str) -> str:
+    """Некоторые reasoning-модели через OpenRouter кладут chain-of-thought прямо в
+    content как <think>...</think> вместо отдельного поля reasoning — вырезаем его,
+    пользователю в Telegram должен уходить только финальный ответ."""
+    return _THINK_TAG_RE.sub("", text).strip()
 
 
 def _blocks_to_openai_messages(role: str, blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -84,7 +94,7 @@ class OpenRouterProvider(AIProvider):
         )
 
         choice = response.choices[0]
-        text = choice.message.content or ""
+        text = _strip_reasoning(choice.message.content or "")
         tool_calls: list[ToolCall] = []
         raw_content: list[dict[str, Any]] = []
 

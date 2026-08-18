@@ -13,7 +13,11 @@ class BrowserOpenArgs(BaseModel):
 
 class BrowserOpenTool(Tool):
     name = "browser_open"
-    description = "Открывает страницу по URL в headless-браузере."
+    description = (
+        "Открывает страницу в реальном Chromium/Playwright с сохранённой пользовательской "
+        "сессией. Предпочитай этот инструмент для Avito и других динамических сайтов, "
+        "где нужны JavaScript, актуальные цены, авторизация, кнопки, формы или чаты."
+    )
     args_schema = BrowserOpenArgs
     permission = PermissionLevel.SAFE
 

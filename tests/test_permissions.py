@@ -13,7 +13,7 @@ def test_confirm_and_critical_require_confirmation():
     assert PermissionLevel.CRITICAL.requires_confirmation is True
 
 
-_CONFIRM_TOOLS = {"email_send", "browser_submit"}
+_CONFIRM_TOOLS = {"email_send", "browser_submit", "avito_send_messages"}
 
 
 def test_default_registry_tools_are_safe_unless_explicitly_risky():
@@ -44,4 +44,8 @@ def test_registry_contains_expected_tools():
         "email_read_recent",
         "email_search",
         "create_job",
+        "avito_search",
+        "avito_read_listing",
+        "avito_prepare_messages",
+        "avito_send_messages",
     }

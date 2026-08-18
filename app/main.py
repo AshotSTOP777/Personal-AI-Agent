@@ -8,6 +8,7 @@ from aiogram.enums import ParseMode
 
 from app.ai.coordinator import Coordinator
 from app.ai.factory import build_provider
+from app.browser.session import browser_session
 from app.bot.handlers import build_router
 from app.bot.middlewares import OwnerOnlyMiddleware
 from app.config import settings
@@ -67,6 +68,7 @@ async def main() -> None:
         job_worker.stop()
         await worker_task
         await job_worker_task
+        await browser_session.close()
         await bot.session.close()
 
 

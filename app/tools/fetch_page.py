@@ -61,8 +61,10 @@ class FetchPageArgs(BaseModel):
 class FetchPageTool(Tool):
     name = "fetch_page"
     description = (
-        "Загружает веб-страницу по URL и возвращает её основной текст (обрезанный по объёму). "
-        "Используй для чтения конкретной страницы, найденной через web_search."
+        "Загружает статический HTML по URL и возвращает основной текст. "
+        "Не исполняет JavaScript. Не используй как основной инструмент для Avito, "
+        "маркетплейсов, личных кабинетов, чатов, динамических цен и интерактивных страниц — "
+        "для них используй browser_open/browser_read."
     )
     args_schema = FetchPageArgs
     permission = PermissionLevel.SAFE

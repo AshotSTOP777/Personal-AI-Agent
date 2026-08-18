@@ -23,6 +23,7 @@ def _fake_page():
         inner_text=AsyncMock(return_value="Заполните форму регистрации"),
         click=AsyncMock(),
         fill=AsyncMock(),
+        is_closed=lambda: False,
     )
     browser_session._page = page
     yield page

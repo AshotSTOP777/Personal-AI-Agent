@@ -50,6 +50,8 @@ class Settings(BaseSettings):
 
     # Browser automation (Playwright)
     browser_timeout_ms: int = Field(default=15000)
+    browser_headless: bool = Field(default=True)
+    browser_profile_dir: str = Field(default=".browser-profile")
 
     # Database
     database_url: str = Field(default="postgresql+asyncpg://user:password@localhost:5432/personal_ai_agent")

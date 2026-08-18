@@ -38,6 +38,10 @@ def _build_default_registry() -> ToolRegistry:
     from app.tools.browser_read import BrowserReadTool
     from app.tools.browser_submit import BrowserSubmitTool
     from app.tools.browser_type import BrowserTypeTool
+    from app.tools.avito_prepare_messages import AvitoPrepareMessagesTool
+    from app.tools.avito_read_listing import AvitoReadListingTool
+    from app.tools.avito_search import AvitoSearchTool
+    from app.tools.avito_send_messages import AvitoSendMessagesTool
     from app.tools.complete_task import CompleteTaskTool
     from app.tools.create_job import CreateJobTool
     from app.tools.create_reminder import CreateReminderTool
@@ -71,6 +75,10 @@ def _build_default_registry() -> ToolRegistry:
         EmailReadRecentTool,
         EmailSearchTool,
         CreateJobTool,
+        AvitoSearchTool,
+        AvitoReadListingTool,
+        AvitoPrepareMessagesTool,
+        AvitoSendMessagesTool,
     ):
         registry.register(tool_cls())
     return registry
