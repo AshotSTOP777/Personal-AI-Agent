@@ -26,14 +26,21 @@ def _is_local(host: str) -> bool:
     return host in ("localhost", "127.0.0.1", "::1")
 
 
-def _find_windows_pg_service() -> str | None:
+def _run_decoded(args: list[str], timeout: int) -> str:
+    """Запускает subprocess и декодирует stdout как bytes с errors='replace' —
+    sc.exe/service-имена могут быть в системной кодовой странице, отличной от UTF-8,
+    поэтому text=True (charmap) иногда падает с UnicodeDecodeError."""
     try:
-        output = subprocess.run(
-            ["sc", "query", "state=", "all"], capture_output=True, text=True, timeout=15
-        ).stdout
+        result = subprocess.run(args, capture_output=True, timeout=timeout)
     except Exception:  # noqa: BLE001
-        return None
-    for name in re.findall(r"SERVICE_NAME:\s*(\S+)", output or ""):
+        return ""
+    raw = result.stdout or b""
+    return raw.decode("utf-8", errors="replace")
+
+
+def _find_windows_pg_service() -> str | None:
+    output = _run_decoded(["sc", "query", "state=", "all"], timeout=15)
+    for name in re.findall(r"SERVICE_NAME:\s*(\S+)", output):
         if "postgres" in name.lower():
             return name
     return None
@@ -41,10 +48,13 @@ def _find_windows_pg_service() -> str | None:
 
 def _start_windows_service(name: str) -> bool:
     try:
-        result = subprocess.run(["net", "start", name], capture_output=True, text=True, timeout=30)
+        result = subprocess.run(["net", "start", name], capture_output=True, timeout=30)
         return result.returncode == 0
     except Exception:  # noqa: BLE001
         return False
+
+
+CREDENTIAL_ERRORS = (asyncpg.InvalidPasswordError, asyncpg.InvalidAuthorizationSpecificationError)
 
 
 async def _try_connect(cfg: dict, dbname: str) -> Exception | None:
@@ -74,18 +84,28 @@ async def _ensure_database_exists(cfg: dict) -> None:
 
 async def ensure_postgres_ready(database_url: str) -> str:
     """Готовит PostgreSQL к работе: если сервер локально установлен, но остановлен —
-    пытается запустить Windows-службу; если БД не существует — создаёт её. Возвращает
-    'OK' либо короткое сообщение с ОДНИМ конкретным действием. Пароль никогда не печатается."""
+    находит и запускает Windows-службу; если целевая БД не существует — создаёт её.
+    Различает "не установлен" / "служба остановлена" / "неверные credentials".
+    Возвращает 'OK' либо короткое сообщение с ОДНИМ конкретным действием. Пароль
+    и другие секреты никогда не печатаются."""
     cfg = _parse(database_url)
+    is_windows_local = sys.platform == "win32" and _is_local(cfg["host"])
 
     error = await _try_connect(cfg, dbname="postgres")
 
-    if error is not None and sys.platform == "win32" and _is_local(cfg["host"]):
+    if error is not None and isinstance(error, CREDENTIAL_ERRORS):
+        return "Неверные пользователь/пароль PostgreSQL — проверь DATABASE_URL в .env (данные не меняю автоматически)."
+
+    if error is not None and is_windows_local:
         service = _find_windows_pg_service()
-        if service and _start_windows_service(service):
-            error = await _try_connect(cfg, dbname="postgres")
-        elif service is None:
+        if service is None:
             return WINGET_INSTALL_HINT
+        if _start_windows_service(service):
+            error = await _try_connect(cfg, dbname="postgres")
+            if error is not None and isinstance(error, CREDENTIAL_ERRORS):
+                return "Неверные пользователь/пароль PostgreSQL — проверь DATABASE_URL в .env (данные не меняю автоматически)."
+        if error is not None:
+            return f"Служба PostgreSQL '{service}' не запускается. Запусти вручную: net start \"{service}\""
 
     if error is not None:
         return f"PostgreSQL недоступен на {cfg['host']}:{cfg['port']} ({type(error).__name__})"
