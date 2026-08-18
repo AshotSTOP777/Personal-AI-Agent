@@ -10,6 +10,7 @@ from aiogram.types import Message
 
 from app.ai.coordinator import Coordinator
 from app.bot.formatting import split_message, strip_markdown
+from app.browser.session import browser_session
 from app.config import settings
 from app.db.session import session_scope
 from app.logging_setup import get_logger
@@ -158,7 +159,8 @@ def build_router(coordinator: Coordinator, stt_provider: STTProvider | None = No
             "Можно писать текстом или голосовым сообщением (до "
             f"{settings.voice_max_duration_seconds // 60} минут).\n\n"
             "Команды: /tasks — активные задачи, /memory — последние факты в памяти, "
-            "/jobs — фоновые задания, /cancel_job <id> — остановить задание, /cancel — отменить текущий запрос."
+            "/jobs — фоновые задания, /cancel_job <id> — остановить задание, "
+            "/avito_login — открыть Avito в браузере для входа, /cancel — отменить текущий запрос."
         )
 
     @router.message(Command("tasks"))
@@ -203,6 +205,18 @@ def build_router(coordinator: Coordinator, stt_provider: STTProvider | None = No
             await message.answer("Задание не найдено или уже завершено.")
             return
         await message.answer(f"Задание #{job.id} остановлено.")
+
+    @router.message(Command("avito_login"))
+    async def cmd_avito_login(message: Message) -> None:
+        """Детерминированно открывает Avito в браузере — без LLM. При BROWSER_HEADLESS=false
+        физически откроется окно Chromium для ручного входа (капча/смс/2FA — вручную)."""
+        try:
+            result = await browser_session.open("https://www.avito.ru")
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("avito_login_failed")
+            await message.answer(f"Не удалось открыть браузер: {exc}")
+            return
+        await message.answer(result)
 
     @router.message(Command("cancel"))
     async def cmd_cancel(message: Message) -> None:
