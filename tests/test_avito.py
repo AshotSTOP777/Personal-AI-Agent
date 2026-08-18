@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.avito.pricing import compute_offer, draft_message, parse_price
-from app.avito.scraper import extract_search_results
+from app.avito.scraper import extract_search_results, is_logged_in
 from app.browser.session import browser_session
 from app.config import Settings
 from app.tools.avito_prepare_messages import AvitoPrepareMessagesTool
@@ -156,3 +156,35 @@ async def test_send_messages_stops_on_protection_and_skips_rest(db_session, monk
     assert "skipped" in lines[0]
     assert "skipped" in lines[1]
     monkeypatch.setattr(browser_session, "_page", None)
+
+
+# ---- avito_status (is_logged_in) ----
+
+@pytest.mark.asyncio
+async def test_is_logged_in_true_when_profile_accessible():
+    page = SimpleNamespace(
+        goto=AsyncMock(),
+        inner_text=AsyncMock(return_value="Личные данные\nВыйти"),
+        url="https://www.avito.ru/profile",
+    )
+    assert await is_logged_in(page) is True
+
+
+@pytest.mark.asyncio
+async def test_is_logged_in_false_when_redirected_to_login():
+    page = SimpleNamespace(
+        goto=AsyncMock(),
+        inner_text=AsyncMock(return_value="Войти"),
+        url="https://www.avito.ru/login",
+    )
+    assert await is_logged_in(page) is False
+
+
+@pytest.mark.asyncio
+async def test_is_logged_in_false_when_login_button_shown():
+    page = SimpleNamespace(
+        goto=AsyncMock(),
+        inner_text=AsyncMock(return_value="Войти\nРегистрация"),
+        url="https://www.avito.ru/profile",
+    )
+    assert await is_logged_in(page) is False

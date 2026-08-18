@@ -24,11 +24,14 @@ class OwnerOnlyMiddleware(BaseMiddleware):
         data: dict[str, Any],
     ) -> Any:
         user = data.get("event_from_user")
+        message_id = getattr(event, "message_id", None)
 
         if user is not None and user.id != self._owner_id:
-            logger.warning("unauthorized_access_attempt", user_id=user.id)
+            logger.warning("unauthorized_access_attempt", user_id=user.id, message_id=message_id)
             if hasattr(event, "answer"):
                 await event.answer("Этот бот приватный и не может выполнять твои поручения.")
             return None
 
+        update = data.get("event_update")
+        logger.info("update_received", message_id=message_id, update_id=getattr(update, "update_id", None))
         return await handler(event, data)

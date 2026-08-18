@@ -9,6 +9,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 
 from app.ai.coordinator import Coordinator
+from app.avito.scraper import is_logged_in as avito_is_logged_in
 from app.bot.formatting import split_message, strip_markdown
 from app.browser.session import browser_session
 from app.config import settings
@@ -160,7 +161,8 @@ def build_router(coordinator: Coordinator, stt_provider: STTProvider | None = No
             f"{settings.voice_max_duration_seconds // 60} минут).\n\n"
             "Команды: /tasks — активные задачи, /memory — последние факты в памяти, "
             "/jobs — фоновые задания, /cancel_job <id> — остановить задание, "
-            "/avito_login — открыть Avito в браузере для входа, /cancel — отменить текущий запрос."
+            "/avito_login — открыть Avito для входа, /avito_status — проверить авторизацию, "
+            "/ping — проверить, что бот жив, /cancel — отменить текущий запрос."
         )
 
     @router.message(Command("tasks"))
@@ -205,6 +207,26 @@ def build_router(coordinator: Coordinator, stt_provider: STTProvider | None = No
             await message.answer("Задание не найдено или уже завершено.")
             return
         await message.answer(f"Задание #{job.id} остановлено.")
+
+    @router.message(Command("ping"))
+    async def cmd_ping(message: Message) -> None:
+        me = await message.bot.get_me()
+        await message.answer(f"pong @{me.username}")
+
+    @router.message(Command("avito_status"))
+    async def cmd_avito_status(message: Message) -> None:
+        """Детерминированно, без LLM: проверяет авторизацию в сохранённом browser-профиле."""
+        try:
+            page = await browser_session.get_page()
+            logged_in = await avito_is_logged_in(page, timeout_ms=browser_session.timeout_ms)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("avito_status_failed")
+            await message.answer(f"Не удалось проверить статус Avito: {exc}")
+            return
+        if logged_in:
+            await message.answer("Avito: авторизован")
+        else:
+            await message.answer("Avito: не авторизован. Выполни /avito_login и войди вручную.")
 
     @router.message(Command("avito_login"))
     async def cmd_avito_login(message: Message) -> None:
