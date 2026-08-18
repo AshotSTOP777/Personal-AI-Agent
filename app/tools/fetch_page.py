@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import ipaddress
 import re
-from urllib.parse import urlparse
 
 import httpx
 from pydantic import BaseModel, Field
@@ -10,6 +8,7 @@ from pydantic import BaseModel, Field
 from app.logging_setup import get_logger
 from app.tools.base import Tool, ToolContext
 from app.tools.permissions import PermissionLevel
+from app.tools.url_safety import UnsafeUrlError, assert_url_allowed
 
 logger = get_logger(__name__)
 
@@ -18,31 +17,6 @@ _TAG_RE = re.compile(r"<[^>]+>")
 _WHITESPACE_RE = re.compile(r"\s+")
 
 MAX_CONTENT_CHARS = 4000
-_BLOCKED_HOSTNAMES = {"localhost"}
-
-
-class FetchPageError(ValueError):
-    pass
-
-
-def _assert_url_allowed(url: str) -> None:
-    parsed = urlparse(url)
-    if parsed.scheme not in ("http", "https"):
-        raise FetchPageError("разрешены только http/https ссылки.")
-
-    hostname = (parsed.hostname or "").lower()
-    if not hostname:
-        raise FetchPageError("некорректный URL.")
-    if hostname in _BLOCKED_HOSTNAMES or hostname.endswith(".localhost"):
-        raise FetchPageError("доступ к localhost запрещён.")
-
-    try:
-        ip = ipaddress.ip_address(hostname)
-    except ValueError:
-        return  # обычное доменное имя, не IP-литерал
-
-    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
-        raise FetchPageError("доступ к приватным/локальным адресам запрещён.")
 
 
 def _extract_main_text(html: str, limit: int) -> str:
@@ -73,8 +47,8 @@ class FetchPageTool(Tool):
         args = FetchPageArgs.model_validate(kwargs)
 
         try:
-            _assert_url_allowed(args.url)
-        except FetchPageError as exc:
+            assert_url_allowed(args.url)
+        except UnsafeUrlError as exc:
             return f"Не удалось загрузить страницу: {exc}"
 
         try:

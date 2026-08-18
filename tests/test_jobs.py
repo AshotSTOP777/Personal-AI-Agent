@@ -95,14 +95,16 @@ async def test_waiting_job_continues_with_saved_context_on_next_run(db_session):
     saved_messages = job.context["messages"]
     assert len(saved_messages) >= 2  # исходная цель + предыдущий ответ модели
 
-    provider2 = ScriptedProvider([_final_response("Нашёл подходящий вариант: example.com/deal")])
+    provider2 = ScriptedProvider([_final_response("[OUTCOME:DONE] Нашёл подходящий вариант: example.com/deal")])
     worker2, bot2 = _make_worker(_make_coordinator(provider2))
     await worker2.run_job(db_session, job)
 
     finished = await job_service.get_job(db_session, job.id)
     assert finished.status.value == "done"
     bot2.send_message.assert_awaited_once()
-    assert "example.com/deal" in bot2.send_message.call_args.args[1]
+    sent_text = bot2.send_message.call_args.args[1]
+    assert "example.com/deal" in sent_text
+    assert "OUTCOME" not in sent_text  # тег статуса не должен уходить владельцу
 
 
 @pytest.mark.asyncio
@@ -114,7 +116,7 @@ async def test_confirm_pauses_job_then_resumes_after_approval(db_session, monkey
         lambda settings: type("Fake", (), {"send": staticmethod(lambda to, s, b: sent.append((to, s, b)))})(),
     )
 
-    job = await job_service.create_job(db_session, user_id=1, goal="Дождись ответа и напиши другу")
+    job = await job_service.create_job(db_session, user_id=1, goal="Дождись ответа от друга по почте")
     provider = ScriptedProvider(
         [_tool_call_response("call_1", "email_send", {"to": "friend@example.com", "subject": "Hi", "body": "Text"})]
     )
@@ -131,7 +133,7 @@ async def test_confirm_pauses_job_then_resumes_after_approval(db_session, monkey
     assert provider.calls == 1
 
     # добавляем в тот же ScriptedProvider ответ для продолжения после подтверждения
-    provider._responses.append(_final_response("Письмо отправлено другу."))
+    provider._responses.append(_final_response("[OUTCOME:DONE] Письмо отправлено другу."))
     result_text = await confirm_job(db_session, coordinator, paused)
 
     assert len(sent) == 1  # выполнено ровно один раз
@@ -149,11 +151,11 @@ async def test_repeated_confirm_job_does_not_resend(db_session, monkeypatch):
         lambda settings: type("Fake", (), {"send": staticmethod(lambda to, s, b: sent.append((to, s, b)))})(),
     )
 
-    job = await job_service.create_job(db_session, user_id=1, goal="Дождись ответа и напиши другу")
+    job = await job_service.create_job(db_session, user_id=1, goal="Дождись ответа от друга по почте")
     provider = ScriptedProvider(
         [
             _tool_call_response("call_1", "email_send", {"to": "friend@example.com", "subject": "Hi", "body": "Text"}),
-            _final_response("Письмо отправлено другу."),
+            _final_response("[OUTCOME:DONE] Письмо отправлено другу."),
         ]
     )
     coordinator = _make_coordinator(provider)

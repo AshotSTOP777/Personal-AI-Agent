@@ -95,7 +95,7 @@ async def test_email_to_other_address_asks_for_confirmation(db_session, monkeypa
     )
     coordinator = _make_coordinator(provider)
 
-    result = await coordinator.handle_message(db_session, user_id=1, user_text="Напиши другу письмо")
+    result = await coordinator.handle_message(db_session, user_id=1, user_text="Разберись с другом по почте")
 
     assert result.pending_confirmation == {
         "tool_name": "email_send",
@@ -123,7 +123,7 @@ async def test_confirm_pending_executes_once_and_continues_loop(db_session, monk
     )
     coordinator = _make_coordinator(provider)
 
-    first = await coordinator.handle_message(db_session, user_id=1, user_text="Напиши другу письмо")
+    first = await coordinator.handle_message(db_session, user_id=1, user_text="Разберись с другом по почте")
     assert first.pending_confirmation is not None
     assert provider.calls == 1
 
@@ -154,7 +154,7 @@ async def test_repeated_confirm_does_not_resend(db_session, monkeypatch):
     )
     coordinator = _make_coordinator(provider)
 
-    await coordinator.handle_message(db_session, user_id=1, user_text="Напиши другу письмо")
+    await coordinator.handle_message(db_session, user_id=1, user_text="Разберись с другом по почте")
     await coordinator.confirm_pending(db_session, user_id=1)
     again = await coordinator.confirm_pending(db_session, user_id=1)
 

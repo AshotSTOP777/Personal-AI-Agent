@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from pathlib import Path
 
 from app.config import settings
 from app.logging_setup import configure_logging, get_logger
 
 logger = get_logger(__name__)
+
+ALEMBIC_INI_PATH = Path(__file__).resolve().parent.parent / "alembic.ini"
 
 
 async def check_telegram() -> str:
@@ -55,7 +58,7 @@ async def check_migrations(db_status: str) -> str:
         from alembic import command
         from alembic.config import Config
 
-        await asyncio.to_thread(command.upgrade, Config("alembic.ini"), "head")
+        await asyncio.to_thread(command.upgrade, Config(str(ALEMBIC_INI_PATH)), "head")
         return "OK"
     except Exception as exc:  # noqa: BLE001
         return f"FAIL ({type(exc).__name__})"
@@ -140,6 +143,10 @@ async def run() -> None:
     print(f"Email: {check_email()}")
     print(f"Tools: {check_tools()}")
     print(f"Workers: {check_workers()}")
+
+    from app.browser.session import browser_session
+
+    await browser_session.close()
 
 
 def main() -> None:

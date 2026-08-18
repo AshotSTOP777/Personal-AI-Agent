@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from app.browser.session import browser_session
 from app.tools.base import Tool, ToolContext
 from app.tools.permissions import PermissionLevel
+from app.tools.url_safety import UnsafeUrlError, assert_url_allowed
 
 
 class BrowserOpenArgs(BaseModel):
@@ -23,6 +24,10 @@ class BrowserOpenTool(Tool):
 
     async def run(self, ctx: ToolContext, **kwargs) -> str:
         args = BrowserOpenArgs.model_validate(kwargs)
+        try:
+            assert_url_allowed(args.url)
+        except UnsafeUrlError as exc:
+            return f"Не удалось открыть страницу: {exc}"
         try:
             return await browser_session.open(args.url)
         except Exception as exc:  # noqa: BLE001

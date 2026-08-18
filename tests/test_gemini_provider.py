@@ -31,6 +31,10 @@ def _function_call_part(call_id: str, name: str, args: dict):
     return SimpleNamespace(text=None, function_call=fc)
 
 
+def _thought_part(text: str):
+    return SimpleNamespace(text=text, function_call=None, thought=True)
+
+
 @pytest.mark.asyncio
 async def test_generate_returns_text_when_no_tool_calls():
     provider = _make_provider()
@@ -99,3 +103,20 @@ async def test_generate_sends_tool_result_with_recovered_name():
     function_response_part = tool_result_content.parts[0]
     assert function_response_part.function_response.name == "create_task"
     assert function_response_part.function_response.response == {"result": "Создал"}
+
+
+@pytest.mark.asyncio
+async def test_generate_skips_thought_parts():
+    provider = _make_provider()
+    provider._client.aio.models.generate_content = AsyncMock(
+        return_value=_fake_response([_thought_part("рассуждаю много букв"), _text_part("Финальный ответ")])
+    )
+
+    result = await provider.generate(
+        system="системный промпт",
+        messages=[{"role": "user", "content": [{"type": "text", "text": "Привет"}]}],
+        tools=[],
+    )
+
+    assert result.text == "Финальный ответ"
+    assert "рассуждаю" not in result.text

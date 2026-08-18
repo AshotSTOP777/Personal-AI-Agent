@@ -15,11 +15,39 @@ _RESULT_RE = re.compile(
     r'result__a[^>]*href="(?P<url>[^"]+)"[^>]*>(?P<title>.*?)</a>.*?result__snippet[^>]*>(?P<snippet>.*?)</a>',
     re.DOTALL,
 )
+# Фолбэк на случай, если DuckDuckGo поменяет разметку сниппетов: берём хотя бы
+# заголовок+ссылку без сниппета, чтобы не отвечать "ничего не найдено" на пустом месте.
+_TITLE_ONLY_RE = re.compile(
+    r'class="result__a"[^>]*href="(?P<url>[^"]+)"[^>]*>(?P<title>.*?)</a>', re.DOTALL
+)
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
 def _strip_tags(text: str) -> str:
     return _TAG_RE.sub("", text).strip()
+
+
+def _parse_results(html: str, max_results: int) -> list[str]:
+    results = []
+    for match in _RESULT_RE.finditer(html):
+        title = _strip_tags(match.group("title"))
+        snippet = _strip_tags(match.group("snippet"))
+        url = match.group("url")
+        results.append(f"- {title}\n  {url}\n  {snippet}")
+        if len(results) >= max_results:
+            return results
+
+    if results:
+        return results
+
+    for match in _TITLE_ONLY_RE.finditer(html):
+        title = _strip_tags(match.group("title"))
+        if not title:
+            continue
+        results.append(f"- {title}\n  {match.group('url')}")
+        if len(results) >= max_results:
+            break
+    return results
 
 
 class WebSearchArgs(BaseModel):
@@ -47,15 +75,7 @@ class WebSearchTool(Tool):
             logger.warning("web_search_failed", error=str(exc))
             return "Не удалось выполнить поиск в интернете. Попробуй переформулировать запрос или повтори позже."
 
-        matches = _RESULT_RE.finditer(response.text)
-        results = []
-        for match in matches:
-            title = _strip_tags(match.group("title"))
-            snippet = _strip_tags(match.group("snippet"))
-            url = match.group("url")
-            results.append(f"- {title}\n  {url}\n  {snippet}")
-            if len(results) >= args.max_results:
-                break
+        results = _parse_results(response.text, args.max_results)
 
         if not results:
             return "По запросу ничего не найдено."

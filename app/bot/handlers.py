@@ -17,7 +17,7 @@ from app.db.session import session_scope
 from app.logging_setup import get_logger
 from app.services import job_service, memory_service, task_service
 from app.stt.base import STTProvider
-from app.workers.job_worker import confirm_job
+from app.workers.job_worker import confirm_job, resume_job_with_user_reply
 
 logger = get_logger(__name__)
 
@@ -64,6 +64,28 @@ async def handle_job_confirmation(message: Message, coordinator: Coordinator, jo
     except Exception:  # noqa: BLE001
         logger.exception("confirm_job_failed", user_id=user_id, job_id=job_id)
         await message.answer("Что-то пошло не так при подтверждении задания. Попробуй ещё раз.")
+        return
+
+    for chunk in split_message(strip_markdown(text)):
+        await message.answer(chunk)
+
+
+async def handle_job_user_reply(message: Message, coordinator: Coordinator, job_id: int, user_text: str) -> None:
+    """Job поставил себе статус NEED_USER — любой следующий ответ владельца (не только
+    'да') кормится обратно в тот же job и продолжает его, а не уходит в обычный чат."""
+    user_id = message.from_user.id
+    await message.bot.send_chat_action(message.chat.id, "typing")
+
+    try:
+        async with session_scope() as session:
+            job = await job_service.get_job(session, job_id)
+            if job is None:
+                await message.answer("Задание не найдено.")
+                return
+            text = await resume_job_with_user_reply(session, coordinator, job, user_text)
+    except Exception:  # noqa: BLE001
+        logger.exception("job_user_reply_failed", user_id=user_id, job_id=job_id)
+        await message.answer("Что-то пошло не так при продолжении задания. Попробуй ещё раз.")
         return
 
     for chunk in split_message(strip_markdown(text)):
@@ -266,12 +288,16 @@ def build_router(coordinator: Coordinator, stt_provider: STTProvider | None = No
                 await handle_confirmation(message, coordinator)
                 return
             coordinator.clear_pending(user_id)
-        elif _is_confirmation(message.text):
+        else:
             async with session_scope() as session:
                 paused_job = await job_service.get_oldest_paused_job(session, user_id)
             if paused_job is not None:
-                await handle_job_confirmation(message, coordinator, paused_job.id)
-                return
+                if paused_job.context.get("needs_user"):
+                    await handle_job_user_reply(message, coordinator, paused_job.id, message.text)
+                    return
+                if _is_confirmation(message.text):
+                    await handle_job_confirmation(message, coordinator, paused_job.id)
+                    return
 
         await handle_text_message(message, coordinator, message.text)
 

@@ -17,6 +17,30 @@ logger = get_logger(__name__)
 
 MAX_TOOL_ITERATIONS = 10
 
+# Явное разрешение выполнить внешнее действие (написать/отправить/связаться) содержится
+# в исходном поручении пользователя — не нужно спрашивать "да" второй раз. PREPARE-глаголы
+# имеют приоритет: "подготовь черновик и отправь" всё равно ничего не отправляет.
+_EXECUTE_INTENT_KEYWORDS = (
+    "напиши", "отправь", "свяжись", "закажи", "зарегистрируй", "предложи", "договорись",
+    "поторгуйся", "попроси скидку", "узнай цену у", "напиши им", "напиши продавц", "send",
+    "write to", "contact", "negotiate", "reach out",
+)
+_PREPARE_INTENT_KEYWORDS = (
+    "подготовь", "составь", "покажи", "что бы ты написал", "черновик", "набросай", "draft", "prepare",
+)
+
+
+def _infers_execute_intent(text: str) -> bool:
+    lowered = text.lower()
+    if any(keyword in lowered for keyword in _PREPARE_INTENT_KEYWORDS):
+        return False
+    return any(keyword in lowered for keyword in _EXECUTE_INTENT_KEYWORDS)
+
+
+def _looks_like_raw_data(text: str) -> bool:
+    stripped = text.strip()
+    return stripped.startswith("[") or stripped.startswith("{")
+
 
 @dataclass
 class CoordinatorResult:
@@ -82,7 +106,10 @@ class Coordinator:
         tool_defs = self._tools.anthropic_tool_definitions()
         ctx = ToolContext(user_id=user_id, session=session)
 
-        return await self._run_loop(session, user_id, messages, tool_defs, ctx, MAX_TOOL_ITERATIONS)
+        return await self._run_loop(
+            session, user_id, messages, tool_defs, ctx, MAX_TOOL_ITERATIONS,
+            allow_confirm_bypass=_infers_execute_intent(user_text),
+        )
 
     async def confirm_pending(self, session: AsyncSession, user_id: int) -> CoordinatorResult:
         """Выполняет ровно тот tool call, что был заблокирован на подтверждение, и
@@ -129,6 +156,7 @@ class Coordinator:
         result = await self._run_loop(
             session, user_id, messages, tool_defs, ctx, max_iterations,
             persist=False, pending_store=store, system_prompt=prompt,
+            allow_confirm_bypass=_infers_execute_intent(goal),
         )
         return result, store.get(user_id)
 
@@ -171,6 +199,7 @@ class Coordinator:
         persist: bool = True,
         pending_store: dict[int, PendingAction] | None = None,
         system_prompt: str | None = None,
+        allow_confirm_bypass: bool = False,
     ) -> CoordinatorResult:
         store = self._pending if pending_store is None else pending_store
         prompt = system_prompt or build_system_prompt()
@@ -181,7 +210,8 @@ class Coordinator:
             response = await self._provider.generate(prompt, messages, tool_defs)
 
             await usage_service.log_usage(
-                session, user_id, model="claude", input_tokens=response.usage.input_tokens,
+                session, user_id, model=getattr(self._provider, "model_name", "unknown"),
+                input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
             )
             logger.info(
@@ -196,7 +226,11 @@ class Coordinator:
                 break
 
             blocked_tool = next(
-                (tc for tc in response.tool_calls if self._permission_of(tc).requires_confirmation),
+                (
+                    tc for tc in response.tool_calls
+                    if self._permission_of(tc).requires_confirmation
+                    and not (allow_confirm_bypass and self._permission_of(tc) == PermissionLevel.CONFIRM)
+                ),
                 None,
             )
             if blocked_tool is not None:
@@ -228,9 +262,14 @@ class Coordinator:
             final_text = "Не удалось завершить задачу за отведённое число шагов. Попробуй сформулировать проще."
 
         # Модель иногда вызывает инструмент и не даёт текстового резюме — вместо
-        # молчаливого "Готово" показываем реальный результат последнего инструмента.
+        # молчаливого "Готово" показываем реальный результат последнего инструмента, но
+        # никогда не дампим сырой JSON/tool output пользователю напрямую.
         if not final_text and last_tool_summary:
-            final_text = last_tool_summary
+            final_text = (
+                "Действие выполнено, но не удалось сформулировать краткий ответ. Уточни запрос."
+                if _looks_like_raw_data(last_tool_summary)
+                else last_tool_summary
+            )
         if not final_text:
             final_text = "Не удалось получить ответ. Попробуй переформулировать запрос."
 

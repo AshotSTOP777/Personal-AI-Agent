@@ -28,9 +28,12 @@ class SiteExtractTool(Tool):
 
     async def run(self, ctx: ToolContext, **kwargs) -> str:
         args = SiteExtractArgs.model_validate(kwargs)
+
+        async def _extract(page):
+            return await page.eval_on_selector_all(args.selector, _EXTRACT_JS)
+
         try:
-            page = await browser_session.get_page()
-            items = await page.eval_on_selector_all(args.selector, _EXTRACT_JS)
+            items = await browser_session.run_exclusive(_extract)
         except Exception as exc:  # noqa: BLE001
             return f"Не удалось извлечь данные: {exc}"
 

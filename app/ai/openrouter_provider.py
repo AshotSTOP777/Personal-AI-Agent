@@ -91,6 +91,7 @@ class OpenRouterProvider(AIProvider):
             messages=openai_messages,
             tools=openai_tools,
             max_tokens=max_tokens,
+            extra_body={"reasoning": {"exclude": True}},
         )
 
         choice = response.choices[0]

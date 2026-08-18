@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import re
+import asyncio
 import subprocess
 import sys
 from urllib.parse import urlsplit
@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 import asyncpg
 
 WINGET_INSTALL_HINT = "PostgreSQL не установлен. Установи одной командой: winget install -e --id PostgreSQL.PostgreSQL.16"
+
+CREDENTIAL_ERRORS = (asyncpg.InvalidPasswordError, asyncpg.InvalidAuthorizationSpecificationError)
 
 
 def _parse(database_url: str) -> dict:
@@ -26,35 +28,53 @@ def _is_local(host: str) -> bool:
     return host in ("localhost", "127.0.0.1", "::1")
 
 
-def _run_decoded(args: list[str], timeout: int) -> str:
-    """Запускает subprocess и декодирует stdout как bytes с errors='replace' —
-    sc.exe/service-имена могут быть в системной кодовой странице, отличной от UTF-8,
-    поэтому text=True (charmap) иногда падает с UnicodeDecodeError."""
+def _run_powershell(script: str, timeout: int) -> str:
+    """PowerShell вместо парсинга локализованного вывода sc.exe — Get-CimInstance
+    фильтрует по внутреннему Name службы (не зависит от языка Windows). Вывод читается
+    как bytes и декодируется с errors='replace', чтобы не падать на кодировке."""
     try:
-        result = subprocess.run(args, capture_output=True, timeout=timeout)
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, timeout=timeout,
+        )
     except Exception:  # noqa: BLE001
         return ""
     raw = result.stdout or b""
-    return raw.decode("utf-8", errors="replace")
+    return raw.decode("utf-8", errors="replace").strip()
 
 
 def _find_windows_pg_service() -> str | None:
-    output = _run_decoded(["sc", "query", "state=", "all"], timeout=15)
-    for name in re.findall(r"SERVICE_NAME:\s*(\S+)", output):
-        if "postgres" in name.lower():
-            return name
-    return None
+    output = _run_powershell(
+        "(Get-CimInstance -ClassName Win32_Service -Filter \"Name LIKE 'postgresql%'\" "
+        "| Select-Object -First 1 -ExpandProperty Name)",
+        timeout=15,
+    )
+    return output or None
+
+
+def _is_elevated() -> bool:
+    output = _run_powershell(
+        "([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()))"
+        ".IsInRole([Security.Principal.WindowsBuiltinRole]::Administrator)",
+        timeout=10,
+    )
+    return output.lower() == "true"
 
 
 def _start_windows_service(name: str) -> bool:
-    try:
-        result = subprocess.run(["net", "start", name], capture_output=True, timeout=30)
-        return result.returncode == 0
-    except Exception:  # noqa: BLE001
-        return False
+    output = _run_powershell(
+        f"try {{ Start-Service -Name '{name}' -ErrorAction Stop }} catch {{ }}; "
+        f"(Get-Service -Name '{name}').Status",
+        timeout=30,
+    )
+    return output.lower() == "running"
 
 
-CREDENTIAL_ERRORS = (asyncpg.InvalidPasswordError, asyncpg.InvalidAuthorizationSpecificationError)
+def _classify_credential_error(exc: Exception) -> str:
+    message = str(exc).lower()
+    if "does not exist" in message:
+        return "Роль/пользователь из DATABASE_URL не существует в PostgreSQL — создай её или укажи существующего пользователя в .env."
+    return "Неверный пароль PostgreSQL в DATABASE_URL — проверь его в .env (данные не меняю автоматически)."
 
 
 async def _try_connect(cfg: dict, dbname: str) -> Exception | None:
@@ -67,6 +87,18 @@ async def _try_connect(cfg: dict, dbname: str) -> Exception | None:
         return None
     except Exception as exc:  # noqa: BLE001
         return exc
+
+
+async def _wait_for_connect(cfg: dict, dbname: str, attempts: int = 6, delay: float = 1.0) -> Exception | None:
+    """После старта службы порт может открыться не мгновенно — недолго ждём готовности,
+    прежде чем сообщать об ошибке."""
+    error: Exception | None = None
+    for _ in range(attempts):
+        error = await _try_connect(cfg, dbname)
+        if error is None:
+            return None
+        await asyncio.sleep(delay)
+    return error
 
 
 async def _ensure_database_exists(cfg: dict) -> None:
@@ -84,28 +116,44 @@ async def _ensure_database_exists(cfg: dict) -> None:
 
 async def ensure_postgres_ready(database_url: str) -> str:
     """Готовит PostgreSQL к работе: если сервер локально установлен, но остановлен —
-    находит и запускает Windows-службу; если целевая БД не существует — создаёт её.
-    Различает "не установлен" / "служба остановлена" / "неверные credentials".
-    Возвращает 'OK' либо короткое сообщение с ОДНИМ конкретным действием. Пароль
-    и другие секреты никогда не печатаются."""
+    находит (language-independent, через CIM) и запускает Windows-службу, ждёт готовности
+    порта; если целевая БД не существует — создаёт её (при наличии прав у настроенного
+    пользователя). Различает "не установлен" / "служба остановлена" / "нужны права
+    администратора" / "неверный пароль" / "роль не существует". Возвращает 'OK' либо
+    короткое сообщение с ОДНИМ конкретным действием. Пароль и другие секреты никогда не
+    печатаются. Remote/Railway (не localhost) не трогает Windows-логикой вообще."""
     cfg = _parse(database_url)
     is_windows_local = sys.platform == "win32" and _is_local(cfg["host"])
 
     error = await _try_connect(cfg, dbname="postgres")
 
     if error is not None and isinstance(error, CREDENTIAL_ERRORS):
-        return "Неверные пользователь/пароль PostgreSQL — проверь DATABASE_URL в .env (данные не меняю автоматически)."
+        return _classify_credential_error(error)
 
     if error is not None and is_windows_local:
         service = _find_windows_pg_service()
         if service is None:
             return WINGET_INSTALL_HINT
-        if _start_windows_service(service):
-            error = await _try_connect(cfg, dbname="postgres")
+
+        started = _start_windows_service(service)
+        if started:
+            error = await _wait_for_connect(cfg, dbname="postgres")
             if error is not None and isinstance(error, CREDENTIAL_ERRORS):
-                return "Неверные пользователь/пароль PostgreSQL — проверь DATABASE_URL в .env (данные не меняю автоматически)."
-        if error is not None:
-            return f"Служба PostgreSQL '{service}' не запускается. Запусти вручную: net start \"{service}\""
+                return _classify_credential_error(error)
+            if error is not None:
+                # Служба подтверждённо Running (started=True), но подключиться всё равно
+                # не вышло — это не проблема службы. Чаще всего DATABASE_URL так и остался
+                # с плейсхолдером user:password вместо реального пользователя PostgreSQL.
+                return (
+                    "Служба PostgreSQL запущена, но не удалось подключиться с указанными "
+                    "в DATABASE_URL пользователем/паролем (возможно, там ещё плейсхолдер "
+                    "user:password) — укажи в .env реального пользователя PostgreSQL "
+                    "(обычно postgres) и его пароль."
+                )
+        elif error is not None:
+            if not _is_elevated():
+                return f"Служба PostgreSQL '{service}' остановлена и требует прав администратора для запуска. Запусти от администратора: net start \"{service}\""
+            return f"Служба PostgreSQL '{service}' не запускается. Попробуй вручную: net start \"{service}\""
 
     if error is not None:
         return f"PostgreSQL недоступен на {cfg['host']}:{cfg['port']} ({type(error).__name__})"
@@ -113,6 +161,6 @@ async def ensure_postgres_ready(database_url: str) -> str:
     try:
         await _ensure_database_exists(cfg)
     except Exception as exc:  # noqa: BLE001
-        return f"Не удалось создать/проверить базу '{cfg['dbname']}' ({type(exc).__name__})"
+        return f"Не удалось создать/проверить базу '{cfg['dbname']}' — у пользователя из DATABASE_URL нет прав CREATEDB ({type(exc).__name__})."
 
     return "OK"

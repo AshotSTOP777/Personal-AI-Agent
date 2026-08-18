@@ -39,6 +39,11 @@ class AIProvider(ABC):
     """Абстракция над LLM-бэкендом. Позволяет заменить Claude на другой провайдер,
     не меняя Coordinator и инструменты."""
 
+    @property
+    def model_name(self) -> str:
+        """Имя модели для логирования usage. Провайдеры хранят его в self._model."""
+        return getattr(self, "_model", type(self).__name__)
+
     @abstractmethod
     async def generate(
         self,

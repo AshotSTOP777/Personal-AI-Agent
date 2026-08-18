@@ -96,3 +96,36 @@ async def test_generate_sends_tool_result_as_tool_message():
     tool_msg = next(m for m in sent if m["role"] == "tool")
     assert tool_msg["tool_call_id"] == "call_1"
     assert tool_msg["content"] == "Создал"
+
+
+@pytest.mark.asyncio
+async def test_generate_requests_reasoning_exclusion():
+    provider = _make_provider()
+    captured = {}
+
+    async def fake_create(**kwargs):
+        captured.update(kwargs)
+        return _fake_response("Готово")
+
+    provider._client.chat.completions.create = fake_create
+
+    await provider.generate(
+        system="s", messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}], tools=[]
+    )
+
+    assert captured["extra_body"] == {"reasoning": {"exclude": True}}
+
+
+@pytest.mark.asyncio
+async def test_generate_strips_think_tags_from_content():
+    provider = _make_provider()
+    provider._client.chat.completions.create = AsyncMock(
+        return_value=_fake_response("<think>рассуждаю много букв</think>Финальный ответ")
+    )
+
+    result = await provider.generate(
+        system="s", messages=[{"role": "user", "content": [{"type": "text", "text": "hi"}]}], tools=[]
+    )
+
+    assert result.text == "Финальный ответ"
+    assert "рассуждаю" not in result.text

@@ -22,15 +22,17 @@ class AvitoReadListingTool(Tool):
 
     async def run(self, ctx: ToolContext, **kwargs) -> str:
         args = AvitoReadListingArgs.model_validate(kwargs)
-        try:
-            page = await browser_session.get_page()
+
+        async def _read(page):
             await page.goto(args.url, timeout=browser_session.timeout_ms)
             body_text = await page.inner_text("body")
             warning = detect_protection(body_text)
             if warning:
                 return warning
             details = await extract_listing_details(page)
+            return json.dumps(details, ensure_ascii=False)
+
+        try:
+            return await browser_session.run_exclusive(_read)
         except Exception as exc:  # noqa: BLE001
             return f"Не удалось открыть объявление: {exc}"
-
-        return json.dumps(details, ensure_ascii=False)

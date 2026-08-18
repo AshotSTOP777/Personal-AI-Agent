@@ -44,7 +44,9 @@ async def test_email_send_requires_confirmation_and_is_not_executed(db_session):
     )
     coordinator = _make_coordinator(provider)
 
-    result = await coordinator.handle_message(db_session, user_id=1, user_text="Напиши человеку по почте привет")
+    # Нейтральная формулировка без явного EXECUTE-намерения ("напиши"/"отправь" и т.п.) —
+    # CONFIRM должен сработать. Явное намерение проверяется в test_intent_authorization.py.
+    result = await coordinator.handle_message(db_session, user_id=1, user_text="Разберись с почтой для меня")
 
     assert result.pending_confirmation is not None
     assert result.pending_confirmation["tool_name"] == "email_send"
@@ -90,8 +92,9 @@ async def test_registration_flow_stops_before_submit(db_session, monkeypatch):
     )
     coordinator = _make_coordinator(provider)
 
+    # Нейтральная формулировка (без явного "зарегистрируй") — CONFIRM должен сработать.
     result = await coordinator.handle_message(
-        db_session, user_id=1, user_text="Зарегистрируй меня на example.com/signup"
+        db_session, user_id=1, user_text="Разберись с сайтом example.com/signup"
     )
 
     assert fake_page.filled is True

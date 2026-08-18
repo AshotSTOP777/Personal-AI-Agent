@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     job_poll_interval_seconds: int = Field(default=60)
     job_max_runs: int = Field(default=100)
 
+    # Часовой пояс владельца (IANA name), используется для интерпретации "завтра в 15:00" и т.п.
+    user_timezone: str = Field(default="Europe/Moscow")
+
     # Logging
     log_level: str = Field(default="INFO")
 
