@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 from app.config import settings
@@ -55,7 +57,7 @@ class BrowserSession:
         self._context = None
         self._page = None
 
-    async def _ensure_page(self):
+    async def _ensure_page(self, headless: bool | None = None):
         if self._page is not None and not self._page.is_closed():
             return self._page
         from playwright.async_api import async_playwright
@@ -64,14 +66,32 @@ class BrowserSession:
             self._playwright = await async_playwright().start()
 
         self._profile_dir.mkdir(parents=True, exist_ok=True)
-        self._context = await self._playwright.chromium.launch_persistent_context(
-            user_data_dir=str(self._profile_dir),
-            headless=self._headless,
-        )
+        launch_headless = self._headless if headless is None else headless
+        try:
+            self._context = await self._playwright.chromium.launch_persistent_context(
+                user_data_dir=str(self._profile_dir),
+                headless=launch_headless,
+            )
+        except Exception as exc:  # noqa: BLE001
+            if "Executable doesn't exist" not in str(exc):
+                raise
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"], check=True, timeout=300
+            )
+            self._context = await self._playwright.chromium.launch_persistent_context(
+                user_data_dir=str(self._profile_dir),
+                headless=launch_headless,
+            )
         page = self._context.pages[0] if self._context.pages else await self._context.new_page()
         page.set_default_timeout(self._timeout_ms)
         self._page = page
         return self._page
+
+    async def reopen_visible(self) -> None:
+        """Закрывает текущий (headless) context и открывает видимое окно Chromium с тем
+        же persistent-профилем — используется для ручного входа/CAPTCHA/2FA по требованию."""
+        await self.close()
+        await self._ensure_page(headless=False)
 
     @property
     def timeout_ms(self) -> int:

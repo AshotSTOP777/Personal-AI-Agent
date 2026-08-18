@@ -53,6 +53,8 @@ def _build_default_registry() -> ToolRegistry:
     from app.tools.list_tasks import ListTasksTool
     from app.tools.recall_memory import RecallMemoryTool
     from app.tools.remember import RememberTool
+    from app.tools.site_extract import SiteExtractTool
+    from app.tools.site_login_status import SiteLoginStatusTool
     from app.tools.web_search import WebSearchTool
 
     registry = ToolRegistry()
@@ -79,6 +81,8 @@ def _build_default_registry() -> ToolRegistry:
         AvitoReadListingTool,
         AvitoPrepareMessagesTool,
         AvitoSendMessagesTool,
+        SiteExtractTool,
+        SiteLoginStatusTool,
     ):
         registry.register(tool_cls())
     return registry

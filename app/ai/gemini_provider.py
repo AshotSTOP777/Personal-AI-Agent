@@ -92,6 +92,8 @@ class GeminiProvider(AIProvider):
 
         candidate_parts = response.candidates[0].content.parts if response.candidates else []
         for index, part in enumerate(candidate_parts or []):
+            if getattr(part, "thought", False):
+                continue  # reasoning/thinking-часть — никогда не показываем пользователю
             if part.text:
                 text_parts.append(part.text)
                 raw_content.append({"type": "text", "text": part.text})

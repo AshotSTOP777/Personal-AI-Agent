@@ -230,9 +230,10 @@ def build_router(coordinator: Coordinator, stt_provider: STTProvider | None = No
 
     @router.message(Command("avito_login"))
     async def cmd_avito_login(message: Message) -> None:
-        """Детерминированно открывает Avito в браузере — без LLM. При BROWSER_HEADLESS=false
-        физически откроется окно Chromium для ручного входа (капча/смс/2FA — вручную)."""
+        """Детерминированно открывает видимое окно Chromium на Avito — без LLM, для
+        ручного входа/капчи/2FA. После входа сессия сохраняется в persistent-профиле."""
         try:
+            await browser_session.reopen_visible()
             result = await browser_session.open("https://www.avito.ru")
         except Exception as exc:  # noqa: BLE001
             logger.exception("avito_login_failed")

@@ -24,6 +24,18 @@ logger = get_logger(__name__)
 POLLING_RETRY_DELAY_SECONDS = 5
 
 
+def _ensure_database_ready() -> None:
+    """Применяет alembic-миграции до head перед стартом — без ручного alembic upgrade head."""
+    from alembic import command
+    from alembic.config import Config
+
+    try:
+        config = Config("alembic.ini")
+        command.upgrade(config, "head")
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"База данных недоступна или миграции не применились: {exc}") from exc
+
+
 async def _run_polling(bot: Bot, dp: Dispatcher) -> None:
     """dp.start_polling уже ретраит часть сетевых ошибок сам, но при 409 Conflict
     (второй запущенный экземпляр) или неожиданной ошибке выходит — не даём процессу
@@ -53,6 +65,10 @@ async def main() -> None:
         raise RuntimeError("TELEGRAM_BOT_TOKEN не задан")
     if not settings.telegram_owner_id:
         raise RuntimeError("TELEGRAM_OWNER_ID не задан")
+
+    await asyncio.to_thread(_ensure_database_ready)
+    logger.info("database_ready")
+
     provider = build_provider(settings)
     stt_provider = build_stt_provider(settings)
     if stt_provider is None:

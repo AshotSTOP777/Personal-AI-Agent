@@ -188,3 +188,28 @@ async def test_is_logged_in_false_when_login_button_shown():
         url="https://www.avito.ru/profile",
     )
     assert await is_logged_in(page) is False
+
+
+# ---- avito_send_messages triggers visible login when not authorized ----
+
+@pytest.mark.asyncio
+async def test_send_messages_opens_visible_login_when_not_authorized(db_session, monkeypatch):
+    page = SimpleNamespace(
+        goto=AsyncMock(),
+        inner_text=AsyncMock(return_value="Войти\nРегистрация"),
+        url="https://www.avito.ru/profile",
+        is_closed=lambda: False,
+    )
+    monkeypatch.setattr(browser_session, "_page", page)
+    monkeypatch.setattr(browser_session, "reopen_visible", AsyncMock())
+    ctx = ToolContext(user_id=1, session=db_session)
+
+    from app.tools.avito_send_messages import AvitoSendMessagesTool
+
+    result = await AvitoSendMessagesTool().run(
+        ctx, messages=[{"url": "https://avito.ru/1", "message": "Здравствуйте"}]
+    )
+
+    browser_session.reopen_visible.assert_awaited_once()
+    assert "не авторизован" in result.lower()
+    monkeypatch.setattr(browser_session, "_page", None)

@@ -48,4 +48,6 @@ def test_registry_contains_expected_tools():
         "avito_read_listing",
         "avito_prepare_messages",
         "avito_send_messages",
+        "site_extract",
+        "site_login_status",
     }

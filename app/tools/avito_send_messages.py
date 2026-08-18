@@ -3,6 +3,7 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 from app.avito.schemas import AvitoMessageItem
+from app.avito.scraper import is_logged_in
 from app.browser.session import browser_session, detect_protection
 from app.tools.base import Tool, ToolContext
 from app.tools.permissions import PermissionLevel
@@ -72,6 +73,15 @@ class AvitoSendMessagesTool(Tool):
         args = AvitoSendMessagesArgs.model_validate(kwargs)
         page = await browser_session.get_page()
         timeout_ms = browser_session.timeout_ms
+
+        if not await is_logged_in(page, timeout_ms=timeout_ms):
+            await browser_session.reopen_visible()
+            page = await browser_session.get_page()
+            await page.goto("https://www.avito.ru", timeout=timeout_ms)
+            return (
+                "Аккаунт Avito не авторизован. Открыл окно браузера — войди вручную "
+                "(включая CAPTCHA/SMS/2FA при необходимости), затем повтори отправку."
+            )
 
         results: list[str] = []
         stopped = False
